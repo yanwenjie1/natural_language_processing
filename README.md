@@ -1,5 +1,5 @@
 # natural_language_processing
-自然语言处理 Torch实现
+自然语言处理 pytorch实现
 
 ## 使用依赖
 
