@@ -2,6 +2,7 @@
 自然语言处理 Torch实现
 
 ## 使用依赖
+
 ```python
 python==3.10.0
 torch==1.12.1
@@ -9,22 +10,18 @@ transformers==4.26.0
 ```
 
 ## 项目结构
-- **data**
-  - **数据集**
-    - ***preprocess.py*** 构造输入
-    - ***train_data.txt*** 样本示例
-- **utils**
-  - ***utils.py*** 工具箱
-  - ***bert_base_model.py*** bert类预训练模型加载
-  - ***bert_ner_model.py*** seq2seq基本模型
-  - ***bert_classify_model.py*** seq2one基本模型
-  - ***adversarial_training.py*** 对抗学习实现
-  - ***adversarial_example.ipynb*** 对抗学习示例
-- **config.py** 配置文件
-- **train.py** 训练文件
-- **server.py** 接口文件
-- **test.py** 测试文件
-# 环境配置
+
+```
+--checkpoints：存放保存的模型，配置及训练日志
+--data：数据集
+--utils：工具箱
+--config.py：配置信息
+--train.py：训练
+--server.py：模型服务接口
+--test.py：测试
+```
+
+## 环境配置
 - step1 基础环境确认
   - win+R 运行cmd 进入命令行界面
   - 确认机器有nvidia显卡
@@ -39,7 +36,7 @@ transformers==4.26.0
   - conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch 
   - 执行下面的命令安装机器学习库scikit-learn==1.1.3
   - conda install scikit-learn  
-  - conda install transformers==4.18.0
+  - conda install transformers==4.26.0
   - pip install pytorch-crf==0.7.2
   - pip install pynvml==11.4.1
   - pip install flask 
@@ -55,6 +52,7 @@ transformers==4.26.0
     - gpt2
     - roformer
     - roformerV2
+    - nezha
  - 推荐的预训练模型
     - chinese-albert-base-cluecorpussmall
     - chinese-bert-base
@@ -69,3 +67,4 @@ transformers==4.26.0
  # 更新日志
  - 2022-11-29：优化了服务端，允许接受batch输入
  - 2022-12-05：优化了batch推理 降低了显存占用问题
+ - 2023-01-28：从文本分类到事件抽取全部集成完毕
