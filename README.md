@@ -1,6 +1,14 @@
 # natural_language_processing
 自然语言处理 Torch实现
-# 项目结构
+
+## 使用依赖
+```python
+python==3.10.0
+torch==1.12.1
+transformers==4.26.0
+```
+
+## 项目结构
 - **data**
   - **数据集**
     - ***preprocess.py*** 构造输入
