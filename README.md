@@ -18,6 +18,7 @@ transformers==4.26.0
 --config.py：配置信息
 --train.py：训练
 --server.py：模型服务接口
+--server_confindence.py：模型服务接口 附带置信度
 --test.py：测试
 ```
 
@@ -68,3 +69,4 @@ transformers==4.26.0
  - 2022-11-29：优化了服务端，允许接受batch输入
  - 2022-12-05：优化了batch推理 降低了显存占用问题
  - 2023-01-28：从文本分类到事件抽取全部集成完毕
+ - 2023-06-06：更新了NER-GP的server，完善了全部模型的置信度支持
