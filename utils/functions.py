@@ -43,6 +43,11 @@ def set_seed(seed=2022):
 def load_model_and_parallel(model, gpu_ids, ckpt_path=None, strict=True):
     """
     加载模型 & 放置到 GPU 中（单卡 / 多卡）
+    :param model: 实例化的模型对象
+    :param gpu_ids: GPU的ID
+    :param ckpt_path: 模型加载路径
+    :param strict: 是否严格加载
+    :return:
     """
     gpu_ids = gpu_ids.split(',')
     # set to device to the first cuda
@@ -138,7 +143,7 @@ def save_model(args, model, global_step, log):
         model.module if hasattr(model, "module") else model
     )
     # log.info('Saving model checkpoint to {}'.format(output_dir))
-    torch.save(model_to_save.state_dict(), os.path.join(args.save_path, 'model_{}.pt'.format(global_step)))
+    # torch.save(model_to_save.state_dict(), os.path.join(args.save_path, 'model_{}.pt'.format(global_step)))
     torch.save(model_to_save.state_dict(), os.path.join(args.save_path, 'model_best.pt'))
 
 
@@ -213,7 +218,7 @@ def get_entity_gp(tensors, id2label):
     entities = []
     for key, value in id2label.items():
         logits = tensors[key, :, :]  # 可以考虑用mask矩阵
-        for start, end in zip(*np.where(logits.cpu().numpy() > 0.5)):
+        for start, end in zip(*np.where(logits.cpu().numpy() > 0)):
             entities.append([value, start, end])
     return [tuple(i) for i in entities]
 
@@ -256,6 +261,52 @@ def get_entity_gp_re(tensors, attention_masks, id2label):
             res = set(re1) & set(re2)
             for r in res:
                 results.append((sh, st, r, oh, ot))
+
+    return results
+
+
+def get_entity_gp_re_confidence(tensors, attention_masks, id2label):
+    """
+
+    :param tensors: list of tensor [entities, heads, tails]
+    :param attention_masks:
+    :param id2label: dict of key:id, value:label
+    :return: list of Tuple: (subject_head, subject_tail, pre_ids, object_head, object_tail)
+    """
+    # tensors: len is 3
+    # tnesors[0].shape: [2, max_len, max_len] 2: subject and object
+    # tnesors[1].shape: [num_tags, max_len, max_len]
+    # tnesors[2].shape: [num_tags, max_len, max_len]
+    assert tensors[1].size(0) == len(id2label)
+    assert tensors[2].size(0) == len(id2label)
+    tokens_len = sum(attention_masks)
+    subject_ids = []
+    object_ids = []
+    results = []
+
+    subject_entity = tensors[0][0, :tokens_len, :tokens_len].squeeze()
+    object_entity = tensors[0][1, :tokens_len, :tokens_len].squeeze()
+    head_output = tensors[1][:, :tokens_len, :tokens_len]
+    tail_output = tensors[2][:, :tokens_len, :tokens_len]
+
+    subject_entity_1 = np.where(subject_entity.cpu().numpy() > 0)
+    object_entity_1 = np.where(object_entity.cpu().numpy() > 0)
+    for m, n in zip(*subject_entity_1):
+        subject_ids.append((m, n, torch.sigmoid(subject_entity[m, n] / 1)))
+    for m, n in zip(*object_entity_1):
+        object_ids.append((m, n, torch.sigmoid(object_entity[m, n] / 1)))
+
+    for sh, st, s_confi in subject_ids:
+        for oh, ot, o_confi in object_ids:
+            re1 = np.where(head_output[:, sh, oh].cpu().numpy() > 0)[0]
+            re2 = np.where(tail_output[:, st, ot].cpu().numpy() > 0)[0]
+            res = set(re1) & set(re2)
+
+            for r in res:
+                r_confi = torch.sigmoid((head_output[r, sh, oh] + tail_output[r, sh, oh]) / 2)
+                confi = (s_confi + o_confi + r_confi) / 3
+                confi = float(confi.detach().cpu().numpy())
+                results.append((sh, st, r, oh, ot, confi))
 
     return results
 

@@ -9,13 +9,14 @@
 """
 import os
 import torch.nn as nn
-from transformers import BertModel, AutoModel, AlbertModel, RoFormerModel, NezhaModel
+from transformers import BertModel, AutoModel, AlbertModel, RoFormerModel, NezhaModel, LongformerModel, T5Model
 
 
 class BaseModel(nn.Module):
     """
     基础的预训练模型
     """
+
     def __init__(self, bert_dir, dropout_prob, model_name=None):
         """
         利用transformers库加载预训练torch模型
@@ -45,6 +46,14 @@ class BaseModel(nn.Module):
             self.bert_module = NezhaModel.from_pretrained(bert_dir,
                                                           output_hidden_states=False,
                                                           hidden_dropout_prob=dropout_prob)
+        elif 'longformer' in model_name:
+            self.bert_module = LongformerModel.from_pretrained(bert_dir,
+                                                               output_hidden_states=False,
+                                                               hidden_dropout_prob=dropout_prob)
+        elif 'T5' in model_name:
+            self.bert_module = T5Model.from_pretrained(bert_dir,
+                                                       output_hidden_states=False,
+                                                       hidden_dropout_prob=dropout_prob)
         else:
             self.bert_module = AutoModel.from_pretrained(bert_dir,
                                                          output_hidden_states=False,

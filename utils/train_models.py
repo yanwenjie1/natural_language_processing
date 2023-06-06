@@ -79,15 +79,16 @@ class TrainClassification:
                 self.optimizer.step()  # 根据梯度更新网络参数
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
-            dev_loss, f1 = self.dev()
-            if f1 > best_f1:
-                best_f1 = f1
-                save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
-            self.log.info('[eval] epoch:{} f1_score={:.6f} best_f1_score={:.6f}'.format(epoch, f1, best_f1))
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
-            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            self.log.info("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
+            if epoch > self.args.train_epochs * 0.4:
+                dev_loss, f1 = self.dev()
+                if f1 > best_f1:
+                    best_f1 = f1
+                    save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
+                self.log.info('[eval] epoch:{} f1_score={:.6f} best_f1_score={:.6f}'.format(epoch, f1, best_f1))
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
+                meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                self.log.info("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
         self.test(os.path.join(self.args.save_path, 'model_best.pt'))
 
     def dev(self):
@@ -216,17 +217,17 @@ class TrainSequenceLabeling:
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
                 # optimizer.zero_grad()的作用是清除优化器涉及的所有torch.Tensor的梯度 当模型只用了一个优化器时 是等价的
-
-            dev_loss, precision, recall, f1 = self.dev()
-            if f1 > best_f1:
-                best_f1 = f1
-                save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
-            self.log.info('[eval] epoch:{} loss:{:.6f} precision={:.6f} recall={:.6f} f1={:.6f} best_f1={:.6f}'
-                          .format(epoch, dev_loss, precision, recall, f1, best_f1))
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
-            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            self.log.info("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
+            if epoch > self.args.train_epochs * 0.4:
+                dev_loss, precision, recall, f1 = self.dev()
+                if f1 > best_f1:
+                    best_f1 = f1
+                    save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
+                self.log.info('[eval] epoch:{} loss:{:.6f} precision={:.6f} recall={:.6f} f1={:.6f} best_f1={:.6f}'
+                              .format(epoch, dev_loss, precision, recall, f1, best_f1))
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
+                meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                self.log.info("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
         self.test(os.path.join(self.args.save_path, 'model_best.pt'))
 
     def dev(self):
@@ -385,15 +386,16 @@ class TrainGlobalPointerNer:
                 self.optimizer.step()  # 根据梯度更新网络参数
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
-            dev_loss, f1 = self.dev()
-            if f1 > best_f1:
-                best_f1 = f1
-                save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
-            self.log.info('[eval] epoch:{} f1_score={:.6f} best_f1_score={:.6f}'.format(epoch, f1, best_f1))
-            pynvml.nvmlInit()
-            handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
-            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
-            print("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
+            if epoch > self.args.train_epochs * 0.4:
+                dev_loss, f1 = self.dev()
+                if f1 > best_f1:
+                    best_f1 = f1
+                    save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
+                self.log.info('[eval] epoch:{} f1_score={:.6f} best_f1_score={:.6f}'.format(epoch, f1, best_f1))
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
+                meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                print("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
         self.test(os.path.join(self.args.save_path, 'model_best.pt'))
 
     def dev(self):
@@ -482,6 +484,9 @@ class TrainGlobalPointerRe:
         self.t_total = len(self.train_loader) * args.train_epochs  # global_steps
         self.optimizer, self.scheduler = build_optimizer_and_scheduler(args, self.model, self.t_total)
 
+    def train2(self):
+        self.model = torch.compile(self.model)
+        self.train()
 
     def train(self):
         best_f1 = 0.0
@@ -556,11 +561,13 @@ class TrainGlobalPointerRe:
                 self.optimizer.step()  # 根据梯度更新网络参数
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
-            dev_loss, f1 = self.dev()
-            if f1 > best_f1:
-                best_f1 = f1
-                save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
-            self.log.info('[eval] epoch:{} f1_score={:.6f} best_f1_score={:.6f}'.format(epoch, f1, best_f1))
+
+            if epoch > self.args.train_epochs * 0.4:
+                dev_loss, f1 = self.dev()
+                if f1 > best_f1:
+                    best_f1 = f1
+                    save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
+                self.log.info('[eval] epoch:{} f1_score={:.6f} best_f1_score={:.6f}'.format(epoch, f1, best_f1))
             pynvml.nvmlInit()
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
             meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
