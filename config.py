@@ -25,9 +25,9 @@ class Args:
         # chinese-roberta-base-wwm-cluecorpussmall
         # chinese-electra-180g-base-discriminator chinese-electra-180g-small-discriminator
         # chinese-nezha-base
-        parser.add_argument('--bert_dir', default='../model/chinese-bert-wwm-ext/',
+        parser.add_argument('--bert_dir', default='../model/chinese-albert-tiny/',
                             help='pre train model dir for uer')
-        parser.add_argument('--data_dir', default='./data/yjyc/',
+        parser.add_argument('--data_dir', default='./data/ske/',
                             help='data dir for uer')
 
         # other args
@@ -39,7 +39,7 @@ class Args:
                             help='random seed')
         parser.add_argument('--gpu_ids', type=str, default='0',
                             help='gpu ids to use, -1 for cpu, "0,1" for multi gpu')
-        parser.add_argument('--max_seq_len', default=512, type=int)
+        parser.add_argument('--max_seq_len', default=256, type=int)
         parser.add_argument('--swa_start', default=3, type=int,
                             help='the epoch when swa start')
 

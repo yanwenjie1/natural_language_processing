@@ -16,11 +16,13 @@ import socket
 import numpy as np
 import tqdm
 from flask import Flask, request
+from torchcrf import CRF
 from gevent import pywsgi
 from transformers import BertTokenizer
-from utils.functions import load_model_and_parallel, get_entity_bieos
-from utils.models import Classification, SequenceLabeling
+from utils.functions import load_model_and_parallel, get_entity_bieos, get_entity_gp_re, get_entity_gp
+from utils.models import Classification, SequenceLabeling, GlobalPointerRe, GlobalPointerNer
 from utils.tokenizers import sentence_pair_encode_list, sentence_encode
+from typing import List, Optional
 
 
 def torch_env():
@@ -97,21 +99,48 @@ def decode(token_ids, attention_masks, token_type_ids):
     :param token_type_ids:
     :return:
     """
-    logits = model(token_ids.to(device), attention_masks.to(device), token_type_ids.to(device), 'dev')
-    if args.use_crf:  # args.use_crf
-        output = logits
-        output = model.crf.decode(output.cpu(), mask=attention_masks)
-    else:
-        output = logits.detach().cpu().numpy()
-        output = np.argmax(output, axis=-1)
     # 批量输入的时候 就不能只取1了
     results = []
-    for y_pre in output:
-        if args.task_type == 'classification':
+
+    if args.task_type == 'classification':
+        logits = model(token_ids.to(device), attention_masks.to(device), token_type_ids.to(device))
+        output = logits.detach().cpu().numpy()
+        output = np.argmax(output, axis=-1)
+        for y_pre in output:
             results.append(id2label[y_pre])
-        if args.task_type == 'sequence':
+
+    if args.task_type == 'sequence' and args.use_gp is True:
+        logits = model(token_ids.to(device), attention_masks.to(device), token_type_ids.to(device))
+        for y_pre in logits:
+            entities = get_entity_gp(y_pre, id2label)
+            results.append(copy.deepcopy(entities))
+
+    if args.task_type == 'sequence' and args.use_gp is False:
+        logits = model(token_ids.to(device), attention_masks.to(device), token_type_ids.to(device), 'dev')
+        if args.use_crf:
+            output = logits
+            output = model.crf.decode(output.cpu(), mask=attention_masks)
+        else:
+            output = logits.detach().cpu().numpy()
+            output = np.argmax(output, axis=-1)
+        for y_pre in output:
             entities = get_entity_bieos([id2label[i] for i in y_pre][1:-1])
             results.append(copy.deepcopy(entities))
+
+
+    if args.task_type == 'relationship':
+        logits = model(token_ids.to(device), attention_masks.to(device), token_type_ids.to(device))
+        output = [i.detach().cpu() for i in logits]
+        for index in range(output[0].shape[0]):
+            entities = get_entity_gp_re([output[0][index],
+                                         output[1][index],
+                                         output[2][index]],
+                                        attention_masks[index].detach(),
+                                        id2label)
+            results.append(copy.deepcopy(entities))
+        return results
+
+
     return results
 
 
@@ -121,14 +150,15 @@ class Dict2Class:
 
 
 torch_env()
-model_name = 'ssws-chinese-albert-tiny-2023-01-12'  # 24这个可以！ 27也可以 44亦可  64 ok
-data_path = './data/ssws'
-args_path = './checkpoints/{}/args.json'.format(model_name)
-model_path = './checkpoints/{}/model_best.pt'.format(model_name)
-port = 12000
+model_name = './checkpoints/ske-chinese-albert-tiny-2023-06-06'
+args_path = os.path.join(model_name, 'args.json')
+model_path = os.path.join(model_name, 'model_best.pt')
+labels_path = os.path.join(model_name, 'labels.json')
+
+port = 12003
 with open(args_path, "r", encoding="utf-8") as fp:
     tmp_args = json.load(fp)
-with open(os.path.join(data_path, 'labels.json'), 'r', encoding='utf-8') as f:
+with open(labels_path, 'r', encoding='utf-8') as f:
     label_list = json.load(f)
 id2label = {k: v for k, v in enumerate(label_list)}
 args = Dict2Class(**tmp_args)
@@ -137,10 +167,17 @@ tokenizer = BertTokenizer(os.path.join(args.bert_dir, 'vocab.txt'))
 if args.task_type == 'classification':
     model, device = load_model_and_parallel(Classification(args), args.gpu_ids, model_path)
 elif args.task_type == 'sequence':
-    model, device = load_model_and_parallel(SequenceLabeling(args), args.gpu_ids, model_path)
-    model.crf.cpu()
+    if args.use_gp == True:
+        model, device = load_model_and_parallel(GlobalPointerNer(args), args.gpu_ids, model_path)
+    else:
+        model, device = load_model_and_parallel(SequenceLabeling(args), args.gpu_ids, model_path)
+        model.crf.cpu()
+elif args.task_type == 'relationship':
+    model, device = load_model_and_parallel(GlobalPointerRe(args), args.gpu_ids, model_path)
+    pass
 model.eval()
 app = Flask(__name__)
+torch.set_float32_matmul_precision('high')
 
 
 @app.route('/prediction', methods=['POST'])
@@ -148,12 +185,13 @@ def prediction():
     # noinspection PyBroadException
     try:
         msgs = request.get_data()
+        # msgs = request.get_json("content")
         msgs = msgs.decode('utf-8')
         # print(msg)
         msgs = json.loads(msgs)
         assert type(msgs) == type([1, 2])
         results = []
-        count = 10  # 控制小batch推理
+        count = 5  # 控制小batch推理
         for index in range(len(msgs) // count + 1):
             msg = msgs[index * count: index * count + count]
             if len(msg) == 0:
@@ -165,6 +203,12 @@ def prediction():
                     results.append([[msg[i][item[1]:item[2]], item[0], item[1], item[2]] for item in result])
             elif args.task_type == 'classification':
                 results.extend(partOfResults)
+            elif args.task_type == 'relationship':
+                for i, result in enumerate(partOfResults):  # result:[(s_h, s_t, p, o_h, o_t)]
+                    results.append([[(msg[i][item[0] - 1: item[1] - 1], int(item[0] - 1), int(item[1] - 1)),
+                                     id2label[item[2]],
+                                     (msg[i][item[3] - 1: item[4] - 1], int(item[3] - 1), int(item[4] - 1))] for item in result])
+                    pass
         res = json.dumps(results, ensure_ascii=False)
         # torch.cuda.empty_cache()
         return res

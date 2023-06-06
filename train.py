@@ -73,18 +73,20 @@ if __name__ == '__main__':
     if os.path.exists(args.save_path):
         shutil.rmtree(args.save_path)
     os.mkdir(args.save_path)
+    # 复制对应的labels文件
+    shutil.copy(os.path.join(args.data_dir, 'labels.json'), os.path.join(args.save_path, 'labels.json'))
     set_logger(os.path.join(args.save_path, 'log.txt'))
+    torch.set_float32_matmul_precision('high')
 
     if args.data_name == "cxqc":
         # set_seed(args.seed)
         args.task_type = 'classification'
         args.task_type_detail = 'sentence_pair'
-        args.batch_size = 64
+        args.batch_size =128
         # args.crf_lr = 2e-5
         # args.num_layers = 2
         args.use_lstm = False
-        args.use_crf = False
-        args.train_epochs = 50
+        args.train_epochs = 5
 
         with open(os.path.join(args.data_dir, 'labels.json'), 'r', encoding='utf-8') as f:
             label_list = json.load(f)
@@ -197,10 +199,11 @@ if __name__ == '__main__':
         # set_seed(args.seed)
         args.task_type = 'sequence'
         args.task_type_detail = 'sequence_labeling'
-        args.batch_size = 1
+        args.batch_size = 16
         # args.crf_lr = 2e-5
-        args.train_epochs = 20
+        args.train_epochs = 50
         args.use_gp = True
+        args.use_advert_train = False
 
         with open(os.path.join(args.data_dir, 'labels.json'), 'r', encoding='utf-8') as f:
             label_list = json.load(f)
@@ -236,13 +239,99 @@ if __name__ == '__main__':
     if args.data_name == "ske":
         # set_seed(args.seed)
         args.task_type = 'relationship'
-        args.batch_size = 64
+        args.batch_size = 128
         # args.crf_lr = 2e-5
-        args.train_epochs = 10
+        args.train_epochs = 2
         args.use_gp = True
         args.use_efficient_globalpointer = True
         args.use_advert_train = False
         args.max_seq_len = 150
+
+        with open(os.path.join(args.data_dir, 'labels.json'), 'r', encoding='utf-8') as f:
+            label_list = json.load(f)
+        label2id = {}
+        id2label = {}
+        for k, v in enumerate(label_list):
+            label2id[v] = k
+            id2label[k] = v
+        args.num_tags = len(label_list)
+
+        logger.info(args)
+        save_json(args.save_path, vars(args), 'args')
+
+        with open(os.path.join(args.data_dir, 'train_data.pkl'), 'rb') as f:
+            train_features = pickle.load(f)
+        train_dataset = GPDataset(train_features, args)
+        train_sampler = SequentialSampler(train_dataset)
+        train_loader = DataLoader(dataset=train_dataset,
+                                  batch_size=args.batch_size,
+                                  sampler=train_sampler,
+                                  collate_fn=gp_collate_fn_re,
+                                  shuffle=False,
+                                  num_workers=0)
+        with open(os.path.join(args.data_dir, 'dev_data.pkl'), 'rb') as f:
+            dev_features = pickle.load(f)
+        dev_dataset = GPDataset(dev_features, args)
+        dev_sampler = SequentialSampler(dev_dataset)
+        dev_loader = DataLoader(dataset=dev_dataset,
+                                batch_size=args.batch_size,
+                                sampler=dev_sampler,
+                                collate_fn=gp_collate_fn_re,
+                                shuffle=False,
+                                num_workers=0)
+
+    if args.data_name == "现金流分配机制":
+        set_seed(args.seed)
+        args.task_type = 'sequence'
+        args.task_type_detail = 'sequence_labeling'
+        args.max_seq_len = 256
+        args.batch_size = 32
+        # args.crf_lr = 2e-5
+        args.num_layers = 1
+        args.train_epochs = 50
+        args.use_gp = False
+        args.lr = 2e-4
+        # args.use_advert_train = False
+
+        with open(os.path.join(args.data_dir, 'labels.json'), 'r', encoding='utf-8') as f:
+            label_list = json.load(f)
+        label2id = {}
+        id2label = {}
+        for k, v in enumerate(label_list):
+            label2id[v] = k
+            id2label[k] = v
+        args.num_tags = len(label_list)
+
+        logger.info(args)
+        save_json(args.save_path, vars(args), 'args')
+
+        with open(os.path.join(args.data_dir, 'train_data.pkl'), 'rb') as f:
+            train_features = pickle.load(f)
+        train_dataset = NerDataset(train_features)
+        train_sampler = SequentialSampler(train_dataset)
+        train_loader = DataLoader(dataset=train_dataset,
+                                  batch_size=args.batch_size,
+                                  sampler=train_sampler,
+                                  num_workers=0)
+        with open(os.path.join(args.data_dir, 'dev_data.pkl'), 'rb') as f:
+            dev_features = pickle.load(f)
+        dev_dataset = NerDataset(dev_features)
+        dev_sampler = SequentialSampler(dev_dataset)
+        dev_loader = DataLoader(dataset=dev_dataset,
+                                batch_size=args.batch_size,
+                                sampler=dev_sampler,
+                                num_workers=0)
+
+    if args.data_name == "宏观地区":
+        # set_seed(args.seed)
+        args.task_type = 'relationship'
+        args.batch_size = 12
+        # args.crf_lr = 2e-5
+        args.train_epochs = 100
+        args.use_gp = True
+        args.use_efficient_globalpointer = True
+        args.use_advert_train = True
+        args.max_seq_len = 510
 
         with open(os.path.join(args.data_dir, 'labels.json'), 'r', encoding='utf-8') as f:
             label_list = json.load(f)
@@ -292,3 +381,4 @@ if __name__ == '__main__':
     if args.task_type == 'relationship':
         GpForSequence = TrainGlobalPointerRe(args, train_loader, dev_loader, label_list, logger)
         GpForSequence.train()
+        # GpForSequence.train2()
