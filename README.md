@@ -60,6 +60,8 @@ transformers==4.26.0
     - chinese-bert-wwm-ext
  - 预训练模型路径
     - \技术中心\0AI\DeepLearning\预训练模型
+ - 语料路径
+    - \技术中心\0AI\DeepLearning\通用语料 其下内容拷贝到data文件夹即可
     
  # 参考资料
  - https://github.com/taishan1994
