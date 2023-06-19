@@ -25,14 +25,15 @@ class Args:
         # chinese-roberta-base-wwm-cluecorpussmall
         # chinese-electra-180g-base-discriminator chinese-electra-180g-small-discriminator
         # chinese-nezha-base
-        parser.add_argument('--bert_dir', default='../model/chinese-albert-tiny/',
+        #
+        parser.add_argument('--bert_dir', default='../model/chinese-t5-base-cluecorpussmall/',
                             help='pre train model dir for uer')
-        parser.add_argument('--data_dir', default='./data/ske/',
+        parser.add_argument('--data_dir', default='./data/现金流生成式/',
                             help='data dir for uer')
 
         # other args
         parser.add_argument('--task_type', default=None, type=str,
-                            help='type of task, classification sequence or relationship')
+                            help='type of task, classification sequence or relationship or generation')
         parser.add_argument('--task_type_detail', default=None, type=str,
                             help='type of task_details, sentence_pair sequence_labeling')
         parser.add_argument('--seed', type=int, default=1024,
@@ -59,7 +60,7 @@ class Args:
         parser.add_argument('--warmup_proportion', default=0.1, type=float)
         parser.add_argument('--weight_decay', default=0.01, type=float)
         parser.add_argument('--adam_epsilon', default=1e-8, type=float)
-        parser.add_argument('--batch_size', default=16, type=int)
+        parser.add_argument('--batch_size', default=32, type=int)
         parser.add_argument('--use_lstm', type=bool, default=True,
                             help='use lstm or not')
         parser.add_argument('--num_layers', default=2, type=int,
@@ -80,6 +81,14 @@ class Args:
                             help='还不太确定是干什么的')
         parser.add_argument('--use_efficient_globalpointer', type=bool, default=True,
                             help='是否使用更高效的globalpointer')
+
+        # MT54Generation
+        parser.add_argument('--input_max_len', type=int, default=512,
+                            help='生成式模型输入的最大长度')
+        parser.add_argument('--output_max_len', type=int, default=256,
+                            help='生成式模型输出的最大长度')
+        parser.add_argument('--eval_steps', type=int, default=1000,
+                            help='每多少个step打印损失及进行验证')
         return parser
 
     def get_parser(self):

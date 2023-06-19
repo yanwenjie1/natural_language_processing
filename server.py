@@ -18,9 +18,9 @@ import tqdm
 from flask import Flask, request
 from torchcrf import CRF
 from gevent import pywsgi
-from transformers import BertTokenizer
+from transformers import BertTokenizer, AutoTokenizer
 from utils.functions import load_model_and_parallel, get_entity_bieos, get_entity_gp_re, get_entity_gp
-from utils.models import Classification, SequenceLabeling, GlobalPointerRe, GlobalPointerNer
+from utils.models import Classification, SequenceLabeling, GlobalPointerRe, GlobalPointerNer, MT54Generation
 from utils.tokenizers import sentence_pair_encode_list, sentence_encode
 from typing import List, Optional
 
@@ -127,7 +127,6 @@ def decode(token_ids, attention_masks, token_type_ids):
             entities = get_entity_bieos([id2label[i] for i in y_pre][1:-1])
             results.append(copy.deepcopy(entities))
 
-
     if args.task_type == 'relationship':
         logits = model(token_ids.to(device), attention_masks.to(device), token_type_ids.to(device))
         output = [i.detach().cpu() for i in logits]
@@ -140,7 +139,6 @@ def decode(token_ids, attention_masks, token_type_ids):
             results.append(copy.deepcopy(entities))
         return results
 
-
     return results
 
 
@@ -150,12 +148,12 @@ class Dict2Class:
 
 
 torch_env()
-model_name = './checkpoints/ske-chinese-albert-tiny-2023-06-06'
+model_name = './checkpoints/现金流生成式-chinese-t5-base-cluecorpussmall-2023-06-13'
 args_path = os.path.join(model_name, 'args.json')
 model_path = os.path.join(model_name, 'model_best.pt')
 labels_path = os.path.join(model_name, 'labels.json')
 
-port = 12003
+port = 12004
 with open(args_path, "r", encoding="utf-8") as fp:
     tmp_args = json.load(fp)
 with open(labels_path, 'r', encoding='utf-8') as f:
@@ -174,6 +172,9 @@ elif args.task_type == 'sequence':
         model.crf.cpu()
 elif args.task_type == 'relationship':
     model, device = load_model_and_parallel(GlobalPointerRe(args), args.gpu_ids, model_path)
+elif args.task_type == 'generation':
+    model, device = load_model_and_parallel(MT54Generation(args), args.gpu_ids, model_path)
+    tokenizer = AutoTokenizer.from_pretrained(args.bert_dir)
     pass
 model.eval()
 app = Flask(__name__)
@@ -192,23 +193,40 @@ def prediction():
         assert type(msgs) == type([1, 2])
         results = []
         count = 5  # 控制小batch推理
-        for index in range(len(msgs) // count + 1):
-            msg = msgs[index * count: index * count + count]
-            if len(msg) == 0:
-                continue
-            token_ids, attention_masks, token_type_ids = encode(msg)
-            partOfResults = decode(token_ids, attention_masks, token_type_ids)
-            if args.task_type == 'sequence':
-                for i, result in enumerate(partOfResults):
-                    results.append([[msg[i][item[1]:item[2]], item[0], item[1], item[2]] for item in result])
-            elif args.task_type == 'classification':
-                results.extend(partOfResults)
-            elif args.task_type == 'relationship':
-                for i, result in enumerate(partOfResults):  # result:[(s_h, s_t, p, o_h, o_t)]
-                    results.append([[(msg[i][item[0] - 1: item[1] - 1], int(item[0] - 1), int(item[1] - 1)),
-                                     id2label[item[2]],
-                                     (msg[i][item[3] - 1: item[4] - 1], int(item[3] - 1), int(item[4] - 1))] for item in result])
-                    pass
+        with torch.no_grad():
+            if args.task_type == 'generation':
+                for input in msgs:
+                    input_token = tokenizer(input + '[SEP]',
+                                            add_special_tokens=False,
+                                            return_tensors="pt")
+                    outputs = model.generate(
+                        max_length=args.output_max_len,
+                        eos_token_id=tokenizer.sep_token_id,
+                        decoder_start_token_id=tokenizer.cls_token_id,
+                        input_ids=input_token.input_ids.to(device),
+                        attention_mask=input_token.attention_mask.to(device))
+                    outputs = tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                    one_result = [item.replace(' ', '') for item in outputs][0]
+                    results.append(one_result)
+            else:
+                for index in range(len(msgs) // count + 1):
+                    msg = msgs[index * count: index * count + count]
+                    if len(msg) == 0:
+                        continue
+                    token_ids, attention_masks, token_type_ids = encode(msg)
+                    partOfResults = decode(token_ids, attention_masks, token_type_ids)
+                    if args.task_type == 'sequence':
+                        for i, result in enumerate(partOfResults):
+                            results.append([[msg[i][item[1]:item[2]], item[0], item[1], item[2]] for item in result])
+                    elif args.task_type == 'classification':
+                        results.extend(partOfResults)
+                    elif args.task_type == 'relationship':
+                        for i, result in enumerate(partOfResults):  # result:[(s_h, s_t, p, o_h, o_t)]
+                            results.append([[(msg[i][item[0] - 1: item[1] - 1], int(item[0] - 1), int(item[1] - 1)),
+                                             id2label[item[2]],
+                                             (msg[i][item[3] - 1: item[4] - 1], int(item[3] - 1), int(item[4] - 1))] for
+                                            item in result])
+                            pass
         res = json.dumps(results, ensure_ascii=False)
         # torch.cuda.empty_cache()
         return res

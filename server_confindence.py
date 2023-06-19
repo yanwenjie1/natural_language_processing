@@ -201,7 +201,7 @@ class MyCRF(CRF):
 
 
 torch_env()
-model_name = './checkpoints/cxqc-chinese-albert-tiny-2023-06-06'
+model_name = './checkpoints/esg_定性_multi-chinese-albert-base-cluecorpussmall-2023-06-12'
 args_path = os.path.join(model_name, 'args.json')
 model_path = os.path.join(model_name, 'model_best.pt')
 labels_path = os.path.join(model_name, 'labels.json')
