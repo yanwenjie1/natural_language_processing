@@ -13,11 +13,13 @@ import torch.nn as nn
 import numpy as np
 import pynvml
 from tqdm import tqdm
-from utils.models import Classification, SequenceLabeling, GlobalPointerNer, GlobalPointerRe
+from utils.models import Classification, SequenceLabeling, GlobalPointerNer, GlobalPointerRe, MT54Generation
 from utils.functions import load_model_and_parallel, build_optimizer_and_scheduler, save_model, get_entity_bieos, \
-    gp_entity_to_label, get_entity_gp, get_entity_gp_re
+    gp_entity_to_label, get_entity_gp, get_entity_gp_re, get_entity_gp_dev
 from utils.adversarial_training import PGD
 from sklearn.metrics import accuracy_score, f1_score, classification_report
+from rouge import Rouge
+from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 
 
 class TrainClassification:
@@ -38,8 +40,8 @@ class TrainClassification:
         if self.args.use_advert_train:
             pgd = PGD(self.model, emb_name='word_embeddings.')
             K = 3
-        for epoch in range(self.args.train_epochs):
-            bar = tqdm(self.train_loader)
+        for epoch in range(1, self.args.train_epochs + 1):
+            bar = tqdm(self.train_loader, ncols=80)
             losses = []
             for batch_data in bar:
                 self.model.train()
@@ -50,7 +52,7 @@ class TrainClassification:
                                            batch_data['token_type_ids'])
                 loss = self.criterion(train_outputs, batch_data['labels'])
                 losses.append(loss.detach().item())
-                bar.set_postfix(loss='%.4f' % (sum(losses)/len(losses)))
+                bar.set_postfix(loss='%.4f' % (sum(losses) / len(losses)))
                 loss.backward()  # 反向传播 计算当前梯度
 
                 if self.args.use_advert_train:
@@ -79,7 +81,7 @@ class TrainClassification:
                 self.optimizer.step()  # 根据梯度更新网络参数
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
-            if epoch > self.args.train_epochs * 0.4:
+            if epoch > self.args.train_epochs * 0.3:
                 dev_loss, f1 = self.dev()
                 if f1 > best_f1:
                     best_f1 = f1
@@ -97,7 +99,7 @@ class TrainClassification:
             tot_dev_loss = 0.0
             dev_outputs = []
             dev_targets = []
-            for dev_data in self.dev_loader:
+            for dev_data in tqdm(self.dev_loader, leave=False, ncols=80):
                 for key in dev_data.keys():
                     dev_data[key] = dev_data[key].to(self.device)
                 outputs = self.model(dev_data['token_ids'],
@@ -125,7 +127,7 @@ class TrainClassification:
             total_loss = 0.0
             test_outputs = []
             test_targets = []
-            for dev_data in tqdm(self.dev_loader):
+            for dev_data in tqdm(self.dev_loader, ncols=80):
                 for key in dev_data.keys():
                     dev_data[key] = dev_data[key].to(device)
                 outputs = model(dev_data['token_ids'],
@@ -174,8 +176,8 @@ class TrainSequenceLabeling:
         if self.args.use_advert_train:
             pgd = PGD(self.model, emb_name='word_embeddings.')
             K = 3
-        for epoch in range(self.args.train_epochs):  # 训练epoch数 默认50
-            bar = tqdm(self.train_loader)
+        for epoch in range(1, self.args.train_epochs + 1):  # 训练epoch数 默认50
+            bar = tqdm(self.train_loader, ncols=80)
             losses = []
             for batch_data in bar:
                 self.model.train()
@@ -188,7 +190,7 @@ class TrainSequenceLabeling:
                                            batch_data['token_type_ids'])
                 loss = self.loss(train_outputs, batch_data['labels'], batch_data['attention_masks'])
                 losses.append(loss.detach().item())
-                bar.set_postfix(loss='%.4f' % (sum(losses)/len(losses)))
+                bar.set_postfix(loss='%.4f' % (sum(losses) / len(losses)))
                 # loss.backward(loss.clone().detach())
                 loss.backward()  # 反向传播 计算当前梯度
                 if self.args.use_advert_train:
@@ -207,7 +209,7 @@ class TrainSequenceLabeling:
                                                        batch_data['token_type_ids'])
                         loss_adv = self.loss(train_outputs_adv, batch_data['labels'], batch_data['attention_masks'])
                         losses.append(loss_adv.detach().item())
-                        bar.set_postfix(loss='%.4f' % (sum(losses)/len(losses)))
+                        bar.set_postfix(loss='%.4f' % (sum(losses) / len(losses)))
                         loss_adv.backward()  # 反向传播，并在正常的grad基础上，累加对抗训练的梯度
                     pgd.restore()  # 恢复embedding参数层
 
@@ -217,7 +219,7 @@ class TrainSequenceLabeling:
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
                 # optimizer.zero_grad()的作用是清除优化器涉及的所有torch.Tensor的梯度 当模型只用了一个优化器时 是等价的
-            if epoch > self.args.train_epochs * 0.4:
+            if epoch > self.args.train_epochs * 0.3:
                 dev_loss, precision, recall, f1 = self.dev()
                 if f1 > best_f1:
                     best_f1 = f1
@@ -242,7 +244,7 @@ class TrainSequenceLabeling:
             # 从而可以更快计算，也可以跑更大的batch来测试
             tot_dev_loss = 0.0
             X, Y, Z = 1e-15, 1e-15, 1e-15  # 相同的实体 预测的实体 真实的实体
-            for dev_batch_data in self.dev_loader:
+            for dev_batch_data in tqdm(self.dev_loader, leave=False, ncols=80):
                 for key in dev_batch_data.keys():
                     dev_batch_data[key] = dev_batch_data[key].to(self.device)
                 dev_outputs = self.model(dev_batch_data['token_ids'],
@@ -282,7 +284,7 @@ class TrainSequenceLabeling:
         X, Y, Z = np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15)
         X_all, Y_all, Z_all = 1e-15, 1e-15, 1e-15
         with torch.no_grad():
-            for dev_batch_data in tqdm(self.dev_loader):
+            for dev_batch_data in tqdm(self.dev_loader, ncols=80):
                 for key in dev_batch_data.keys():
                     dev_batch_data[key] = dev_batch_data[key].to(device)
                 dev_outputs = model(dev_batch_data['token_ids'],
@@ -338,15 +340,14 @@ class TrainGlobalPointerNer:
         self.t_total = len(self.train_loader) * args.train_epochs  # global_steps
         self.optimizer, self.scheduler = build_optimizer_and_scheduler(args, self.model, self.t_total)
 
-
     def train(self):
         best_f1 = 0.0
         self.model.zero_grad()
         if self.args.use_advert_train:
             pgd = PGD(self.model, emb_name='word_embeddings.')
             K = 3
-        for epoch in range(self.args.train_epochs):
-            bar = tqdm(self.train_loader)
+        for epoch in range(1, self.args.train_epochs + 1):
+            bar = tqdm(self.train_loader, ncols=80)
             losses = []
             for batch_data in bar:
                 self.model.train()
@@ -357,7 +358,7 @@ class TrainGlobalPointerNer:
                                            batch_data['token_type_ids'])
                 loss = self.criterion(train_outputs, batch_data['labels'])
                 losses.append(loss.detach().item())
-                bar.set_postfix(loss='%.4f' % (sum(losses)/len(losses)))
+                bar.set_postfix(loss='%.4f' % (sum(losses) / len(losses)))
                 loss.backward()  # 反向传播 计算当前梯度
 
                 if self.args.use_advert_train:
@@ -386,8 +387,8 @@ class TrainGlobalPointerNer:
                 self.optimizer.step()  # 根据梯度更新网络参数
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
-            if epoch > self.args.train_epochs * 0.4:
-                dev_loss, f1 = self.dev()
+            if epoch > self.args.train_epochs * 0.:
+                _, f1 = self.dev()
                 if f1 > best_f1:
                     best_f1 = f1
                     save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
@@ -403,25 +404,29 @@ class TrainGlobalPointerNer:
         with torch.no_grad():
             tot_dev_loss = 0.0
             X, Y, Z = 1e-15, 1e-15, 1e-15  # 相同的实体 预测的实体 真实的实体
-            for dev_batch_data in self.dev_loader:
+            for dev_batch_data in tqdm(self.dev_loader, leave=False, ncols=80):
                 for key in dev_batch_data.keys():
                     dev_batch_data[key] = dev_batch_data[key].to(self.device)
                 dev_outputs = self.model(dev_batch_data['token_ids'],
                                          dev_batch_data['attention_masks'],
                                          dev_batch_data['token_type_ids'])
-                dev_loss = self.criterion(dev_outputs, dev_batch_data['labels'])
-                tot_dev_loss += dev_loss.detach().item()
+                # dev_loss = self.criterion(dev_outputs, dev_batch_data['labels'])
+                # tot_dev_loss += dev_loss.detach().item()
 
                 # dev_outputs: [batch_size, num_label, max_len, max_len]
+                R = set(get_entity_gp_dev(dev_outputs))
+                T = set(get_entity_gp_dev(dev_batch_data['labels']))
+                X += len(R & T)
+                Y += len(R)
+                Z += len(T)
 
-                for y_pre, y_true in zip(dev_outputs, dev_batch_data['labels']):
-                    # y_pre: [num_label, max_len, max_len]  y_true: [num_label, max_len, max_len]
-                    R = set(get_entity_gp(y_pre, self.id2label))
-                    y_true = y_true.detach().cpu()
-                    T = set(get_entity_gp(y_true, self.id2label))
-                    X += len(R & T)
-                    Y += len(R)
-                    Z += len(T)
+                # for i in range(dev_outputs.size(0)):
+                #     R = set(get_entity_gp(dev_outputs[i, :, :], self.id2label))
+                #     T = set(get_entity_gp(dev_batch_data['labels'][i, :, :], self.id2label))
+                #     X += len(R & T)
+                #     Y += len(R)
+                #     Z += len(T)
+
             f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
             return tot_dev_loss, f1
 
@@ -434,26 +439,39 @@ class TrainGlobalPointerNer:
         X, Y, Z = np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15)
         X_all, Y_all, Z_all = 1e-15, 1e-15, 1e-15
         with torch.no_grad():
-            for dev_batch_data in tqdm(self.dev_loader):
+            for dev_batch_data in tqdm(self.dev_loader, ncols=80):
                 for key in dev_batch_data.keys():
                     dev_batch_data[key] = dev_batch_data[key].to(device)
                 dev_outputs = model(dev_batch_data['token_ids'],
                                     dev_batch_data['attention_masks'],
                                     dev_batch_data['token_type_ids'])
 
-                for y_pre, y_true in zip(dev_outputs, dev_batch_data['labels']):
-                    R = set(get_entity_gp(y_pre, self.id2label))
-                    y_true = y_true.detach().cpu()
-                    T = set(get_entity_gp(y_true, self.id2label))
-                    X_all += len(R & T)
-                    Y_all += len(R)
-                    Z_all += len(T)
-                    for item in R & T:
-                        X[entitys_to_ids[item[0]]] += 1
-                    for item in R:
-                        Y[entitys_to_ids[item[0]]] += 1
-                    for item in T:
-                        Z[entitys_to_ids[item[0]]] += 1
+                R = set(get_entity_gp_dev(dev_outputs))
+                T = set(get_entity_gp_dev(dev_batch_data['labels']))
+                X_all += len(R & T)
+                Y_all += len(R)
+                Z_all += len(T)
+
+                for item in R & T:
+                    X[item[1]] += 1
+                for item in R:
+                    Y[item[1]] += 1
+                for item in T:
+                    Z[item[1]] += 1
+
+                # for y_pre, y_true in zip(dev_outputs, dev_batch_data['labels']):
+                #     R = set(get_entity_gp(y_pre, self.id2label))
+                #     y_true = y_true.detach().cpu()
+                #     T = set(get_entity_gp(y_true, self.id2label))
+                #     X_all += len(R & T)
+                #     Y_all += len(R)
+                #     Z_all += len(T)
+                #     for item in R & T:
+                #         X[entitys_to_ids[item[0]]] += 1
+                #     for item in R:
+                #         Y[entitys_to_ids[item[0]]] += 1
+                #     for item in T:
+                #         Z[entitys_to_ids[item[0]]] += 1
         len1 = max(max([len(i) for i in entitys]), 4)
         f1, precision, recall = 2 * X_all / (Y_all + Z_all), X_all / Y_all, X_all / Z_all
         str_log = '\n{:<10}{:<15}{:<15}{:<15}\n'.format('实体' + chr(12288) * (len1 - len('实体')), 'precision', 'recall',
@@ -494,8 +512,8 @@ class TrainGlobalPointerRe:
         if self.args.use_advert_train:
             pgd = PGD(self.model, emb_name='word_embeddings.')
             K = 3
-        for epoch in range(self.args.train_epochs):
-            bar = tqdm(self.train_loader)
+        for epoch in range(1, self.args.train_epochs + 1):
+            bar = tqdm(self.train_loader, ncols=80)
             losses = []
             entity_losses = []
             head_losses = []
@@ -562,7 +580,7 @@ class TrainGlobalPointerRe:
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
 
-            if epoch > self.args.train_epochs * 0.4:
+            if epoch > self.args.train_epochs * 0.3:
                 dev_loss, f1 = self.dev()
                 if f1 > best_f1:
                     best_f1 = f1
@@ -579,7 +597,7 @@ class TrainGlobalPointerRe:
         with torch.no_grad():
             tot_dev_loss = 0.0
             X, Y, Z = 1e-15, 1e-15, 1e-15  # 相同的实体 预测的实体 真实的实体
-            for dev_batch_data in self.dev_loader:
+            for dev_batch_data in tqdm(self.dev_loader, leave=False, ncols=80):
                 for key in dev_batch_data.keys():
                     if key != 'labels' and key != 'callback':
                         dev_batch_data[key] = dev_batch_data[key].to(self.device)
@@ -618,7 +636,7 @@ class TrainGlobalPointerRe:
         X, Y, Z = np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15)
         X_all, Y_all, Z_all = 1e-15, 1e-15, 1e-15
         with torch.no_grad():
-            for dev_batch_data in tqdm(self.dev_loader):
+            for dev_batch_data in tqdm(self.dev_loader, ncols=80):
                 for key in dev_batch_data.keys():
                     if key != 'labels' and key != 'callback':
                         dev_batch_data[key] = dev_batch_data[key].to(device)
@@ -660,6 +678,161 @@ class TrainGlobalPointerRe:
                                                                     recall[entitys_to_ids[entity]],
                                                                     f1[entitys_to_ids[entity]])
         self.log.info(str_log)
+
+
+class TrainMT54Generation:
+    def __init__(self, args, train_loader, dev_loader, tokenizer, log):
+        self.train_loader = train_loader
+        self.dev_loader = dev_loader
+        self.tokenizer = tokenizer
+        self.args = args
+        self.log = log
+        self.model, self.device = load_model_and_parallel(MT54Generation(self.args), args.gpu_ids)
+        self.t_total = len(self.train_loader) * args.train_epochs  # global_steps
+        self.optimizer, self.scheduler = build_optimizer_and_scheduler(args, self.model, self.t_total)
+
+    def train(self):
+        global_step = 0
+        best_rouge_1 = 0
+        best_rouge_2 = 0
+        best_rouge_l = 0
+        self.model.zero_grad()
+        if self.args.use_advert_train:
+            pgd = PGD(self.model, emb_name='word_embeddings.')
+            K = 3
+        for epoch in range(1, self.args.train_epochs + 1):
+            bar = tqdm(self.train_loader, ncols=80)
+            losses = []
+            for batch_data in bar:
+                self.model.train()
+
+                input_token = self.tokenizer(batch_data['inputs'],
+                                             add_special_tokens=False,
+                                             padding='max_length',
+                                             max_length=self.args.input_max_len,
+                                             return_tensors="pt")
+                label_token = self.tokenizer(batch_data['outputs'],
+                                             add_special_tokens=False,
+                                             padding='max_length',
+                                             max_length=self.args.output_max_len,
+                                             return_tensors="pt")
+
+                label_token.input_ids[label_token.input_ids == self.tokenizer.pad_token_id] = -100
+
+                loss = self.model(input_token.input_ids.to(self.device),
+                                  input_token.attention_mask.to(self.device),
+                                  label_token.input_ids.to(self.device))
+                losses.append(loss.detach().item())
+                bar.set_postfix(loss='%.4f' % (sum(losses) / len(losses)))
+                loss.backward()  # 反向传播 计算当前梯度
+
+                if self.args.use_advert_train:
+                    pgd.backup_grad()  # 保存之前的梯度
+                    # 对抗训练
+                    for t in range(K):
+                        # 在embedding上添加对抗扰动, first attack时备份最开始的param.processor
+                        # 可以理解为单独给embedding层进行了反向传播(共K次)
+                        pgd.attack(is_first_attack=(t == 0))
+                        if t != K - 1:
+                            self.model.zero_grad()  # 如果不是最后一次对抗 就先把现有的梯度清空
+                        else:
+                            pgd.restore_grad()  # 如果是最后一次对抗 恢复所有的梯度
+                        loss_adv = self.model(input_token.input_ids.to(self.device),
+                                              input_token.attention_mask.to(self.device),
+                                              label_token.input_ids.to(self.device))
+                        losses.append(loss_adv.detach().item())
+                        bar.set_postfix(loss='%.4f' % (sum(losses) / len(losses)))
+                        loss_adv.backward()  # 反向传播 对抗训练的梯度 在最后一次推理的时候 叠加了一次loss
+                    pgd.restore()  # 恢复embedding参数
+
+                # 梯度裁剪 解决梯度爆炸问题 不解决梯度消失问题  对所有的梯度乘以一个小于1的 clip_coef=max_norm/total_grad
+                # 和clip_grad_value的区别在于 clip_grad_value暴力指定了区间 而clip_grad_norm做范数上的调整
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+                self.optimizer.step()  # 根据梯度更新网络参数
+                self.scheduler.step()  # 更新优化器的学习率
+                self.model.zero_grad()  # 将所有模型参数的梯度置为0
+                global_step += 1
+
+                if global_step > self.t_total * 0.3 and global_step % self.args.eval_steps == 0:
+                    metrics = self.dev()
+                    self.log.info(metrics)
+                    # if metrics['rouge-1'] > best_rouge_1 and metrics['rouge-2'] > best_rouge_2 and metrics[
+                    #     'rouge-l'] > best_rouge_l:
+                    if metrics['rouge-1'] > best_rouge_1 and metrics['rouge-2'] > best_rouge_2 :
+                        best_rouge_1 = metrics['rouge-1']
+                        best_rouge_2 = metrics['rouge-2']
+                        best_rouge_l = metrics['rouge-l']
+                        save_model(self.args, self.model, "", self.log)
+                        self.log.info('[eval] epoch:{} best-rouge-1={:.6f} best-rouge-2={:.6f} '
+                                      'best-rouge-l={:.6f}'.format(epoch, best_rouge_1, best_rouge_2, best_rouge_l))
+                    pynvml.nvmlInit()
+                    handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
+                    meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+                    self.log.info("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
+
+    def dev(self):
+        self.model.eval()
+        with torch.no_grad():
+            true_outputs = []
+            pred_outputs = []
+
+            for dev_data in tqdm(self.dev_loader, leave=False, ncols=80):
+                input_token = self.tokenizer(dev_data['inputs'],
+                                             add_special_tokens=False,
+                                             padding='max_length',
+                                             max_length=self.args.input_max_len,
+                                             return_tensors="pt")
+
+                outputs = self.model.generate(
+                    max_length=self.args.output_max_len,
+                    eos_token_id=self.tokenizer.sep_token_id,
+                    decoder_start_token_id=self.tokenizer.cls_token_id,
+                    input_ids=input_token.input_ids.to(self.device),
+                    attention_mask=input_token.attention_mask.to(self.device))
+                outputs = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
+                gen = [item.replace(' ', '') for item in outputs]
+                true_outputs.extend([i.replace('[SEP]', '') for i in dev_data['outputs']])
+                pred_outputs.extend(gen)
+
+            for index in range(10):
+                print("=" * 100)
+                print("真实：", true_outputs[index])
+                print("预测：", pred_outputs[index])
+                print("=" * 100)
+            metrics = self.evaluate(true_outputs, pred_outputs)
+
+        return metrics
+
+    @staticmethod
+    def evaluate(true_title, pred_title):
+        rouge = Rouge()
+        total = 0
+        rouge_1, rouge_2, rouge_l, bleu = 0, 0, 0, 0
+        for t_title, p_title in zip(true_title, pred_title):
+            total += 1
+            t_title = ' '.join(t_title).lower()
+            p_title = ' '.join(p_title).lower()
+            # print(t_title, t_title)
+            if p_title.strip():
+                scores = rouge.get_scores(hyps=p_title, refs=t_title)
+                rouge_1 += scores[0]['rouge-1']['f']
+                rouge_2 += scores[0]['rouge-2']['f']
+                rouge_l += scores[0]['rouge-l']['f']
+                bleu += sentence_bleu(
+                    references=[t_title.split(' ')],
+                    hypothesis=p_title.split(' '),
+                    smoothing_function=SmoothingFunction().method1
+                )
+        rouge_1 /= total
+        rouge_2 /= total
+        rouge_l /= total
+        bleu /= total
+        return {
+            'rouge-1': rouge_1,
+            'rouge-2': rouge_2,
+            'rouge-l': rouge_l,
+            'bleu': bleu,
+        }
 
 
 class SparseMultilabelCategoricalCrossentropy(nn.Module):
@@ -705,14 +878,16 @@ class MultilabelCategoricalCrossentropy(nn.Module):
          阶段则输出y_pred大于0的类。如有疑问，请仔细阅读并理解本文。
     参考：https://kexue.fm/archives/7359
     """
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
     def forward(self, y_pred, y_true):
         """ y_true ([Tensor]): [..., num_classes]
             y_pred ([Tensor]): [..., num_classes]
         """
-        y_pred = (1-2*y_true) * y_pred
-        y_pred_pos = y_pred - (1-y_true) * 1e12
+        y_pred = (1 - 2 * y_true) * y_pred
+        y_pred_pos = y_pred - (1 - y_true) * 1e12
         y_pred_neg = y_pred - y_true * 1e12
 
         y_pred_pos = torch.cat([y_pred_pos, torch.zeros_like(y_pred_pos[..., :1])], dim=-1)
@@ -725,9 +900,10 @@ class MultilabelCategoricalCrossentropy(nn.Module):
 class MyLossNer(MultilabelCategoricalCrossentropy):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
+
     def forward(self, y_pred, y_true):
-        y_true = y_true.view(y_true.shape[0]*y_true.shape[1], -1)  # [btz*ner_vocab_size, seq_len*seq_len]
-        y_pred = y_pred.view(y_pred.shape[0]*y_pred.shape[1], -1)  # [btz*ner_vocab_size, seq_len*seq_len]
+        y_true = y_true.view(y_true.shape[0] * y_true.shape[1], -1)  # [btz*ner_vocab_size, seq_len*seq_len]
+        y_pred = y_pred.view(y_pred.shape[0] * y_pred.shape[1], -1)  # [btz*ner_vocab_size, seq_len*seq_len]
         return super().forward(y_pred, y_true)
 
 

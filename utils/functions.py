@@ -209,18 +209,36 @@ def get_entity_bieos(labels):
 def get_entity_gp(tensors, id2label):
     """
 
-    :param tensors:
+    :param tensors: labels_num * max_len * max_len
     :param id2label: dict of key:id, value:label
     :return: list of Tuple: (label, start, end)
     """
     assert tensors.size(0) == len(id2label)
 
     entities = []
-    for key, value in id2label.items():
-        logits = tensors[key, :, :]  # 可以考虑用mask矩阵
-        for start, end in zip(*np.where(logits.cpu().numpy() > 0)):
-            entities.append([value, start, end])
+    for label, start, end in torch.nonzero(tensors.detach() > 0):
+        entities.append([id2label[label.item()], start.item(), end.item()])
+
+    # for label, start, end in zip(*np.where(tensors.cpu().numpy() > 0)):
+    #     entities.append([id2label[label], start, end])
+
+    # for key, value in id2label.items():
+    #     logits = tensors[key, :, :]  # 可以考虑用mask矩阵
+    #     for start, end in zip(*np.where(logits.cpu().numpy() > 0)):
+    #         entities.append([value, start, end])
     return [tuple(i) for i in entities]
+
+
+def get_entity_gp_dev(tensors):
+    """
+
+    :param tensors: batch * labels_num * max_len * max_len
+    :return: list of Tuple: (batch, label, start, end)
+    """
+    entities = []
+    for batch, label, start, end in torch.nonzero(tensors > 0):
+        entities.append((batch.item(), label.item(), start.item(), end.item()))
+    return entities
 
 
 def get_entity_gp_re(tensors, attention_masks, id2label):
@@ -321,7 +339,7 @@ def gp_collate_fn(batch):
     attention_masks = []
     token_type_ids = []
     labels = []
-
+    device = torch.device("cpu" if batch[0]['args'].gpu_ids == '-1' else "cuda:" + batch[0]['args'].gpu_ids)
     for item in batch:
         token_ids.append(item['token_ids'].numpy())
         attention_masks.append(item['attention_masks'].numpy())
@@ -330,11 +348,11 @@ def gp_collate_fn(batch):
         # labels.append(gp_entity_to_label(item['labels'], item['args']))
 
     token_ids = np.array(token_ids, dtype=float)
-    token_ids = torch.tensor(token_ids, dtype=torch.long, device='cuda:0')
+    token_ids = torch.tensor(token_ids, dtype=torch.long, device=device)
     attention_masks = np.array(attention_masks, dtype=float)
-    attention_masks = torch.tensor(attention_masks, dtype=torch.uint8, device='cuda:0')
+    attention_masks = torch.tensor(attention_masks, dtype=torch.uint8, device=device)
     token_type_ids = np.array(token_type_ids, dtype=float)
-    token_type_ids = torch.tensor(token_type_ids, dtype=torch.long, device='cuda:0')
+    token_type_ids = torch.tensor(token_type_ids, dtype=torch.long, device=device)
     labels = gp_entity_to_label(labels, batch[0]['args'])
     # labels = torch.tensor(np.array(labels), dtype=torch.long, device='cuda:0')
     return {'token_ids': token_ids,
@@ -374,6 +392,23 @@ def gp_collate_fn_re(batch):
             'callback': labels}
 
 
+def gp_collate_fn_gen(batch):
+    """
+
+    :param batch: list, len(batch) == batch_size
+    :return:
+    """
+    inputs = []
+    outputs = []
+
+    for item in batch:
+        inputs.append(item['input'])
+        outputs.append(item['output'])
+
+    return {'inputs': inputs,
+            'outputs': outputs}
+
+
 def gp_entity_to_label(entities, args):
     """
     注意CLS的问题
@@ -382,13 +417,13 @@ def gp_entity_to_label(entities, args):
     :return:
     """
     # self.labels = [example.labels for example in features]
-
+    device = torch.device("cpu" if args.gpu_ids == '-1' else "cuda:" + args.gpu_ids)
     # labels = np.zeros((args.num_tags, args.max_seq_len, args.max_seq_len), dtype=int)
     # for label, start, end in entities:
     #     labels[label, start, end] = 1
     # return labels
     labels = torch.zeros((len(entities), args.num_tags, args.max_seq_len, args.max_seq_len),
-                         device='cuda:0',
+                         device=device,
                          dtype=torch.long)
     for i, entity in enumerate(entities):
         for label, start, end in entity:

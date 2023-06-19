@@ -30,6 +30,12 @@ class BaseFeature:
         self.labels = labels
 
 
+class GenerationFeature:
+    def __init__(self, input, output):
+        self.input = input
+        self.output = output
+
+
 class Classification(BaseModel):
     def __init__(self, args):
         super(Classification, self).__init__(bert_dir=args.bert_dir,
@@ -150,48 +156,22 @@ class SequenceLabeling(BaseModel):
         return seq_out
 
 
-class T54Generation(BaseModel):
+class MT54Generation(BaseModel):
     def __init__(self, args):
-        super(T54Generation, self).__init__(bert_dir=args.bert_dir,
-                                            dropout_prob=args.dropout_prob,
-                                            model_name=args.model_name)
+        super(MT54Generation, self).__init__(bert_dir=args.bert_dir,
+                                             dropout_prob=args.dropout_prob,
+                                             model_name=args.model_name)
         self.args = args
-        self.dropout = nn.Dropout(0.3)
-        self.classifier = nn.Linear(self.base_config.hidden_size, args.num_tags)
-        init_blocks = [self.classifier]
-        self._init_weights(init_blocks, initializer_range=self.base_config.initializer_range)
 
-    def forward(self, token_ids, attention_masks, token_type_ids):
-        bert_outputs = self.bert_module(input_ids=token_ids,  # vocab 对应的id
-                                        attention_mask=attention_masks,  # pad mask 情况
-                                        token_type_ids=token_type_ids  # CLS *** SEP *** SEP 区分第一个和第二个句子
-                                        )
+    def forward(self, token_ids, attention_masks, labels):
+        outputs = self.bert_module(input_ids=token_ids,  # vocab 对应的id
+                                   attention_mask=attention_masks,  # pad mask 情况
+                                   labels=labels
+                                   )
+        return outputs.loss
 
-        # 在这一个地方详细的描述一次：
-        # 输出是namedtuple或字典对象  可以通过属性或序号访问模型输出结果
-        # 输入的维度是：input_ids:[batch_size, tokens] (tokens=max_len)
-        # outputs一共四个属性、last_hidden_state, pooler_output, hidden_states, attentions
-        # 一般不取hidden_states太多了 但是某种用途下 取后n层做平均 可能会有更好的效果 无论是分类还是序列任务
-
-        # outputs[0]是last_hidden_state, 是基于token表示的， 对于实体命名、问答非常有用、实际包括四个维度[layers, batches, tokens, features]
-        # 不获取全部的12层输出的条件下 是 [batches, tokens, features]
-        # outputs[1]是pooler_output 整个输入的合并表达 形状为[batches, features]
-        # 是由 hidden_states获取了cls标签后进行了dense 和 Tanh后的输出 dense层是768*768的全连接, 就是调整一下输出
-        # 所以bert的model并不是简单的组合返回, 一般来说，需要使用bert做句子级别的任务，可以使用pooled_output结果做baseline， 进一步的微调可以使用last_hidden_state的结果
-        # 分类任务的时候 再乘 [features, num_tags]的线性层 实现 one_hot的输出
-
-        # 常规
-        # seq_out = bert_outputs[1]  # [batchsize, features] 有空的时候这里要看看   bert_outputs['pooler_output']
-        # # seq_out1 = bert_outputs[1]  # bert_outputs['pooler_output']
-        # seq_out = self.dropout(seq_out)
-        # seq_out = self.classifier(seq_out)  # [batchsize, num_tags]
-
-        # 平均池化
-        seq_out = bert_outputs[0].mean(1)
-        seq_out = self.dropout(seq_out)
-        seq_out = self.classifier(seq_out)  # [batchsize, num_tags]
-
-        return seq_out
+    def generate(self, **kwargs):
+        return self.bert_module.generate(**kwargs)
 
 
 class GlobalPointer(nn.Module):

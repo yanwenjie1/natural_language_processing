@@ -9,7 +9,8 @@
 """
 import os
 import torch.nn as nn
-from transformers import BertModel, AutoModel, AlbertModel, RoFormerModel, NezhaModel, LongformerModel, T5Model
+from transformers import BertModel, AutoModel, AlbertModel, RoFormerModel, NezhaModel, \
+    LongformerModel, MT5ForConditionalGeneration
 
 
 class BaseModel(nn.Module):
@@ -50,10 +51,9 @@ class BaseModel(nn.Module):
             self.bert_module = LongformerModel.from_pretrained(bert_dir,
                                                                output_hidden_states=False,
                                                                hidden_dropout_prob=dropout_prob)
-        elif 'T5' in model_name:
-            self.bert_module = T5Model.from_pretrained(bert_dir,
-                                                       output_hidden_states=False,
-                                                       hidden_dropout_prob=dropout_prob)
+        elif 't5' in model_name:
+            self.bert_module = MT5ForConditionalGeneration.from_pretrained(bert_dir,
+                                                                           output_hidden_states=False)
         else:
             self.bert_module = AutoModel.from_pretrained(bert_dir,
                                                          output_hidden_states=False,

@@ -7,7 +7,7 @@
 @Function: XX
 @Other: XX
 """
-from transformers import BertTokenizer
+from transformers import BertTokenizer, AutoTokenizer
 
 
 def sentence_pair_encode(text1, text2, max_seq_len, tokenizer: BertTokenizer, model='Train'):
@@ -78,8 +78,6 @@ def sentence_encode(text, max_seq_len, tokenizer: BertTokenizer):
     :param text:
     :param max_seq_len:
     :param tokenizer:
-    :param model:
-    :param text2:
     :return:
     """
     assert type(text) == type([1, 2])
@@ -97,4 +95,3 @@ def sentence_encode(text, max_seq_len, tokenizer: BertTokenizer):
         if token == ' ':
             token_ids[0, j + 1] = 50
     return token_ids, attention_masks, token_type_ids
-
