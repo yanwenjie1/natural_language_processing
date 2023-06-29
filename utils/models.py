@@ -30,6 +30,17 @@ class BaseFeature:
         self.labels = labels
 
 
+class UIEFeature:
+    def __init__(self, token_ids, attention_masks, token_type_ids, label_start=None, label_end=None, call_back=None):
+        self.token_ids = token_ids
+        self.attention_masks = attention_masks
+        self.token_type_ids = token_type_ids
+        # labels
+        self.label_start = label_start
+        self.label_end = label_end
+        self.call_back = call_back
+
+
 class GenerationFeature:
     def __init__(self, input, output):
         self.input = input
@@ -356,6 +367,20 @@ class GlobalPointerRe(BaseModel):
         #   return entity_output, head_output, tail_output
         # loss = self.criterion([entity_output, head_output, tail_output], [entity_labels, head_labels, tail_labels])
         # return loss
+
+
+class UIE4Ner(BaseModel):
+    def __init__(self, args):
+        super(UIE4Ner, self).__init__(bert_dir=args.bert_dir,
+                                      dropout_prob=args.dropout_prob,
+                                      model_name=args.model_name)
+        self.args = args
+
+    def forward(self, token_ids, attention_masks, token_type_ids):
+        start_prob, end_prob = self.bert_module(input_ids=token_ids,
+                                                attention_mask=attention_masks,
+                                                token_type_ids=token_type_ids)
+        return start_prob, end_prob
 
 
 class ViterbiDecoder(object):

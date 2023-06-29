@@ -95,3 +95,36 @@ def sentence_encode(text, max_seq_len, tokenizer: BertTokenizer):
         if token == ' ':
             token_ids[0, j + 1] = 50
     return token_ids, attention_masks, token_type_ids
+
+
+def sentence_pair_encode_plus(text1, text2, max_seq_len, tokenizer: BertTokenizer):
+    """
+
+    :param text1:
+    :param text2:
+    :param max_seq_len:
+    :param tokenizer:
+    :return:
+    """
+    words = list(text1)
+    words.append('[SEP]')
+    words.extend(list(text2))
+    assert len(words) + 2 <= max_seq_len
+    word_ids = tokenizer.encode_plus(words,
+                                     max_length=max_seq_len,
+                                     padding="max_length",
+                                     truncation='longest_first',
+                                     return_token_type_ids=True,
+                                     return_attention_mask=True,
+                                     return_tensors='pt')
+    token_ids = word_ids['input_ids']
+    attention_masks = word_ids['attention_mask'].byte()
+    token_type_ids = word_ids['token_type_ids']
+
+    for index in range(len(text1) + 2, len(words) + 2):
+        token_type_ids[0, index] = 1
+
+    for j, token in enumerate(words):
+        if token == ' ':
+            token_ids[0, j + 1] = 50
+    return token_ids, attention_masks, token_type_ids

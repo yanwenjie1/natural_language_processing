@@ -8,9 +8,12 @@
 @Other: XX
 """
 import os
+import sys
+sys.path.append(os.path.dirname(__file__))
+import torch
 import torch.nn as nn
 from transformers import BertModel, AutoModel, AlbertModel, RoFormerModel, NezhaModel, \
-    LongformerModel, MT5ForConditionalGeneration
+    LongformerModel, MT5ForConditionalGeneration, ErnieModel
 
 
 class BaseModel(nn.Module):
@@ -48,12 +51,19 @@ class BaseModel(nn.Module):
                                                           output_hidden_states=False,
                                                           hidden_dropout_prob=dropout_prob)
         elif 'longformer' in model_name:
+            LongformerModel.base_model_prefix = 'bert'
             self.bert_module = LongformerModel.from_pretrained(bert_dir,
                                                                output_hidden_states=False,
                                                                hidden_dropout_prob=dropout_prob)
         elif 't5' in model_name:
             self.bert_module = MT5ForConditionalGeneration.from_pretrained(bert_dir,
                                                                            output_hidden_states=False)
+        elif 'uie' in model_name:
+            # self.bert_module = UIE(ErnieModel)
+            # model = torch.load(os.path.join(bert_dir, 'pytorch_model.pt'), map_location=torch.device('cpu'))
+            # self.bert_module.load_state_dict(model, strict=True)
+            self.bert_module = torch.load(os.path.join(bert_dir, 'pytorch_model.bin'))  # 模型结构见：UIE
+            self.bert_module.config = None
         else:
             self.bert_module = AutoModel.from_pretrained(bert_dir,
                                                          output_hidden_states=False,

@@ -13,9 +13,9 @@ import torch.nn as nn
 import numpy as np
 import pynvml
 from tqdm import tqdm
-from utils.models import Classification, SequenceLabeling, GlobalPointerNer, GlobalPointerRe, MT54Generation
+from utils.models import Classification, SequenceLabeling, GlobalPointerNer, GlobalPointerRe, MT54Generation, UIE4Ner
 from utils.functions import load_model_and_parallel, build_optimizer_and_scheduler, save_model, get_entity_bieos, \
-    gp_entity_to_label, get_entity_gp, get_entity_gp_re, get_entity_gp_dev
+    gp_entity_to_label, get_entity_gp, get_entity_gp_re, get_entity_gp_dev, SpanEvaluator
 from utils.adversarial_training import PGD
 from sklearn.metrics import accuracy_score, f1_score, classification_report
 from rouge import Rouge
@@ -513,7 +513,7 @@ class TrainGlobalPointerRe:
             pgd = PGD(self.model, emb_name='word_embeddings.')
             K = 3
         for epoch in range(1, self.args.train_epochs + 1):
-            bar = tqdm(self.train_loader, ncols=80)
+            bar = tqdm(self.train_loader, ncols=160)
             losses = []
             entity_losses = []
             head_losses = []
@@ -758,7 +758,7 @@ class TrainMT54Generation:
                     self.log.info(metrics)
                     # if metrics['rouge-1'] > best_rouge_1 and metrics['rouge-2'] > best_rouge_2 and metrics[
                     #     'rouge-l'] > best_rouge_l:
-                    if metrics['rouge-1'] > best_rouge_1 and metrics['rouge-2'] > best_rouge_2 :
+                    if metrics['rouge-1'] > best_rouge_1 and metrics['rouge-2'] > best_rouge_2:
                         best_rouge_1 = metrics['rouge-1']
                         best_rouge_2 = metrics['rouge-2']
                         best_rouge_l = metrics['rouge-l']
@@ -833,6 +833,158 @@ class TrainMT54Generation:
             'rouge-l': rouge_l,
             'bleu': bleu,
         }
+
+
+class TrainUIE4Ner:
+    def __init__(self, args, train_loader, dev_loader, log):
+        self.train_loader = train_loader
+        self.dev_loader = dev_loader
+        self.args = args
+        self.log = log
+        self.criterion = torch.nn.BCELoss()
+        self.metric = SpanEvaluator()
+        self.model, self.device = load_model_and_parallel(UIE4Ner(self.args), args.gpu_ids)
+        self.t_total = len(self.train_loader) * args.train_epochs  # global_steps
+        self.optimizer, self.scheduler = build_optimizer_and_scheduler(args, self.model, self.t_total)
+
+    def train(self):
+        best_f1 = 0.0
+        self.model.zero_grad()
+        if self.args.use_advert_train:
+            pgd = PGD(self.model, emb_name='word_embeddings.')
+            K = 3
+        for epoch in range(1, self.args.train_epochs + 1):
+            bar = tqdm(self.train_loader, ncols=80)
+            losses = []
+            for batch_data in bar:
+                self.model.train()
+                for key in batch_data.keys():
+                    if key != 'call_back':
+                        batch_data[key] = batch_data[key].to(self.device)
+                start_prob, end_prob = self.model(batch_data['token_ids'],
+                                                  batch_data['attention_masks'],
+                                                  batch_data['token_type_ids'])
+
+                loss_start = self.criterion(start_prob, batch_data['start_ids'])
+                loss_end = self.criterion(end_prob, batch_data['end_ids'])
+                loss = (loss_start + loss_end) / 2.0
+                losses.append(loss.detach().item())
+                bar.set_postfix(loss='%.4f  ' % np.mean(losses))
+                loss.backward()  # 反向传播 计算当前梯度
+
+                if self.args.use_advert_train:
+                    pgd.backup_grad()  # 保存之前的梯度
+                    # 对抗训练
+                    for t in range(K):
+                        pgd.attack(is_first_attack=(t == 0))
+                        if t != K - 1:
+                            self.model.zero_grad()  # 如果不是最后一次对抗 就先把现有的梯度清空
+                        else:
+                            pgd.restore_grad()  # 如果是最后一次对抗 恢复所有的梯度
+                        start_prob_adv, end_prob_adv = self.model(batch_data['token_ids'],
+                                                                  batch_data['attention_masks'],
+                                                                  batch_data['token_type_ids'])
+                        loss_start_adv = self.criterion(start_prob_adv, batch_data['start_ids'])
+                        loss_end_adv = self.criterion(end_prob_adv, batch_data['end_ids'])
+                        loss_adv = (loss_start_adv + loss_end_adv) / 2.0
+                        losses.append(loss_adv.detach().item())
+                        bar.set_postfix(loss='%.4f  ' % np.mean(losses))
+                        loss_adv.backward()  # 反向传播 对抗训练的梯度 在最后一次推理的时候 叠加了一次loss
+                    pgd.restore()  # 恢复embedding参数
+
+                # 梯度裁剪 解决梯度爆炸问题 不解决梯度消失问题  对所有的梯度乘以一个小于1的 clip_coef=max_norm/total_grad
+                # 和clip_grad_value的区别在于 clip_grad_value暴力指定了区间 而clip_grad_norm做范数上的调整
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.max_grad_norm)
+                self.optimizer.step()  # 根据梯度更新网络参数
+                self.scheduler.step()  # 更新优化器的学习率
+                self.model.zero_grad()  # 将所有模型参数的梯度置为0
+
+            if epoch > self.args.train_epochs * 0.3:
+                precision, recall, f1 = self.dev()
+                if f1 > best_f1:
+                    best_f1 = f1
+                    save_model(self.args, self.model, str(epoch) + '_{:.4f}'.format(f1), self.log)
+                self.log.info('[eval] epoch:{} precision={:.6f} recall={:.6f} f1={:.6f} best_f1={:.6f}'
+                              .format(epoch, precision, recall, f1, best_f1))
+            pynvml.nvmlInit()
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # 这里的0是GPU id
+            meminfo = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            self.log.info("剩余显存：" + str(meminfo.free / 1024 / 1024))  # 显卡剩余显存大小
+        # self.test(os.path.join(self.args.save_path, 'model_best.pt'))  test没写好 后面再优化
+
+    def dev(self):
+        self.model.eval()
+        self.metric.reset()
+        with torch.no_grad():
+            for dev_batch_data in tqdm(self.dev_loader, leave=False, ncols=80):
+                for key in dev_batch_data.keys():
+                    if key != 'call_back':
+                        dev_batch_data[key] = dev_batch_data[key].to(self.device)
+
+                start_prob, end_prob = self.model(dev_batch_data['token_ids'],
+                                                  dev_batch_data['attention_masks'],
+                                                  dev_batch_data['token_type_ids'])
+
+                num_correct, num_infer, num_label = self.metric.compute(start_prob.cpu().detach().numpy(),
+                                                                        end_prob.cpu().detach().numpy(),
+                                                                        dev_batch_data['start_ids'].cpu().detach().numpy(),
+                                                                        dev_batch_data['end_ids'].cpu().detach().numpy())
+                self.metric.update(num_correct, num_infer, num_label)
+
+            precision, recall, f1 = self.metric.accumulate()
+            return precision, recall, f1
+
+    def test(self, model_path):
+        model, device = load_model_and_parallel(UIE4Ner(self.args), self.args.gpu_ids, model_path)
+        model.eval()
+        # 确定有哪些关系
+        # entitys = self.labels
+        # entitys_to_ids = {v: k for k, v in enumerate(entitys)}
+        # X, Y, Z = np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15), np.full((len(entitys),), 1e-15)
+        # X_all, Y_all, Z_all = 1e-15, 1e-15, 1e-15
+        # with torch.no_grad():
+        #     for dev_batch_data in tqdm(self.dev_loader, ncols=80):
+        #         for key in dev_batch_data.keys():
+        #             if key != 'labels' and key != 'callback':
+        #                 dev_batch_data[key] = dev_batch_data[key].to(device)
+        #         dev_batch_data['labels'][0] = dev_batch_data['labels'][0].to(device)
+        #         dev_batch_data['labels'][1] = dev_batch_data['labels'][1].to(device)
+        #         dev_batch_data['labels'][2] = dev_batch_data['labels'][2].to(device)
+        #
+        #         dev_outputs = model(dev_batch_data['token_ids'],
+        #                             dev_batch_data['attention_masks'],
+        #                             dev_batch_data['token_type_ids'])
+
+                # for index in range(dev_outputs[0].shape[0]):  # batch_index
+                #     # 循环每一个batch
+                #     R = set(get_entity_gp_re([dev_outputs[0][index], dev_outputs[1][index], dev_outputs[2][index]],
+                #                              dev_batch_data['attention_masks'][index].detach(),
+                #                              self.id2label))
+                #     T = set(dev_batch_data['callback'][index])
+                #     X_all += len(R & T)
+                #     Y_all += len(R)
+                #     Z_all += len(T)
+                #     for item in R & T:
+                #         X[item[2]] += 1
+                #     for item in R:
+                #         Y[item[2]] += 1
+                #     for item in T:
+                #         Z[item[2]] += 1
+
+        # len1 = max(max([len(i) for i in entitys]), 4)
+        # f1, precision, recall = 2 * X_all / (Y_all + Z_all), X_all / Y_all, X_all / Z_all
+        # str_log = '\n{:<10}{:<15}{:<15}{:<15}\n'.format('关系' + chr(12288) * (len1 - len('关系')), 'precision', 'recall',
+        #                                                 'f1-score')
+        # str_log += '{:<10}{:<15.4f}{:<15.4f}{:<15.4f}\n'.format('全部关系' + chr(12288) * (len1 - len('全部关系')), precision,
+        #                                                         recall, f1)
+        # f1, precision, recall = 2 * X / (Y + Z), X / Y, X / Z
+        #
+        # for entity in entitys:
+        #     str_log += '{:<10}{:<15.4f}{:<15.4f}{:<15.4f}\n'.format(entity + chr(12288) * (len1 - len(entity)),
+        #                                                             precision[entitys_to_ids[entity]],
+        #                                                             recall[entitys_to_ids[entity]],
+        #                                                             f1[entitys_to_ids[entity]])
+        # self.log.info(str_log)
 
 
 class SparseMultilabelCategoricalCrossentropy(nn.Module):
