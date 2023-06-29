@@ -19,9 +19,9 @@ from flask import Flask, request
 from torchcrf import CRF
 from gevent import pywsgi
 from transformers import BertTokenizer, AutoTokenizer
-from utils.functions import load_model_and_parallel, get_entity_bieos, get_entity_gp_re, get_entity_gp
-from utils.models import Classification, SequenceLabeling, GlobalPointerRe, GlobalPointerNer, MT54Generation
-from utils.tokenizers import sentence_pair_encode_list, sentence_encode
+from utils.functions import load_model_and_parallel, get_entity_bieos, get_entity_gp_re, get_entity_gp, get_span
+from utils.models import Classification, SequenceLabeling, GlobalPointerRe, GlobalPointerNer, MT54Generation, UIE4Ner
+from utils.tokenizers import sentence_pair_encode_list, sentence_encode, sentence_pair_encode_plus
 from typing import List, Optional
 
 
@@ -78,7 +78,7 @@ def encode(texts):
         max_len = max([len(i) for i in texts]) + 2
         max_len = min(max_len, 512)
         for text in texts:
-            token_id, attention_mask, token_type_id = sentence_encode(list(text), max_len + 2, tokenizer)
+            token_id, attention_mask, token_type_id = sentence_encode(list(text), max_len, tokenizer)
             if token_ids is None:
                 token_ids = token_id
                 attention_masks = attention_mask
@@ -142,34 +142,147 @@ def decode(token_ids, attention_masks, token_type_ids):
     return results
 
 
+def uie_encode_ner(prompts: list, content: str) -> dict:
+    result = []
+    for prompt in prompts:
+        max_len = args.max_seq_len - 3 - len(prompt)
+        if len(prompt) > max(args.max_seq_len * 0.25, 128):
+            continue
+        i = 0
+        while i < len(content):
+            token_ids, attention_masks, token_type_ids = sentence_pair_encode_plus(prompt,
+                                                                                   content[i: i + max_len],
+                                                                                   args.max_seq_len, tokenizer)
+            result.append({'token_ids': token_ids,
+                           'attention_masks': attention_masks,
+                           'token_type_ids': token_type_ids,
+                           'prompt': prompt,
+                           'content': content[i: i + max_len],
+                           'start_id': i})
+            i += max_len
+    return result
+
+
+def get_uie_result(content: str, parallel=16) -> dict:
+    """
+    model tokenizer label_list
+    :param content:
+    :param parallel:
+    :return:
+    """
+    # 先是ner的encode
+    label_ner = [i for i in label_list if type(i) == type('str')]
+    label_relation = [i for i in label_list if type(i) == type({})][0]
+
+    ner_encode_result = uie_encode_ner(label_ner, content)
+    # 然后是ner的decode
+    result_all = {k: [] for k in label_ner}
+    start_ids_all = [[] for _ in ner_encode_result]
+    end_ids_all = [[] for _ in ner_encode_result]
+    index = 0
+    while index < len(ner_encode_result):
+        ner_encode_result_part = ner_encode_result[index: index + parallel]
+        token_ids = [i['token_ids'].squeeze().numpy() for i in ner_encode_result_part]
+        attention_masks = [i['attention_masks'].squeeze().numpy() for i in ner_encode_result_part]
+        token_type_ids = [i['token_type_ids'].squeeze().numpy() for i in ner_encode_result_part]
+        token_ids = torch.tensor(np.array(token_ids), dtype=torch.long).to(device)
+        attention_masks = torch.tensor(np.array(attention_masks), dtype=torch.uint8).to(device)
+        token_type_ids = torch.tensor(np.array(token_type_ids), dtype=torch.long).to(device)
+        output_sp, output_ep = model(token_ids, attention_masks, token_type_ids)
+        for _index, location in torch.nonzero(output_sp > 0.5):
+            start_ids_all[_index.item() + index].append(location.item())
+        for _index, location in torch.nonzero(output_ep > 0.5):
+            end_ids_all[_index.item() + index].append(location.item())
+        index += parallel
+    # 下面是解码
+    for i, (start_ids, end_ids) in enumerate(zip(start_ids_all, end_ids_all)):
+        label_set = get_span(list(start_ids), list(end_ids))
+        for (start, end) in label_set:
+            prompt = ner_encode_result[i]['prompt']
+            new_ner_result = {
+                    'text': ner_encode_result[i]['content'][start - len(prompt) - 2: end - len(prompt) - 2],
+                    'start': ner_encode_result[i]['start_id'] + start - len(prompt) - 2,
+                    'end': ner_encode_result[i]['start_id'] + end - len(prompt) - 2
+                }
+            assert new_ner_result['text'] == content[new_ner_result['start']: new_ner_result['end']]
+            result_all[prompt].append(new_ner_result)
+
+    # 然后是relation的decode
+    for subject_label in label_relation:
+        for subject_result in result_all[subject_label]:
+            subject = subject_result['text']
+            object_labels = label_relation[subject_label]
+            relation_encode_result = uie_encode_ner([subject + "的" + i for i in object_labels], content)
+            relation_start_ids_all = [[] for _ in relation_encode_result]
+            relation_end_ids_all = [[] for _ in relation_encode_result]
+            index = 0
+            while index < len(relation_encode_result):
+                relation_encode_result_part = relation_encode_result[index: index + parallel]
+                token_ids = [i['token_ids'].squeeze().numpy() for i in relation_encode_result_part]
+                attention_masks = [i['attention_masks'].squeeze().numpy() for i in relation_encode_result_part]
+                token_type_ids = [i['token_type_ids'].squeeze().numpy() for i in relation_encode_result_part]
+                token_ids = torch.tensor(np.array(token_ids), dtype=torch.long).to(device)
+                attention_masks = torch.tensor(np.array(attention_masks), dtype=torch.uint8).to(device)
+                token_type_ids = torch.tensor(np.array(token_type_ids), dtype=torch.long).to(device)
+                output_sp, output_ep = model(token_ids, attention_masks, token_type_ids)
+                for _index, location in torch.nonzero(output_sp > 0.5):
+                    relation_start_ids_all[_index.item() + index].append(location.item())
+                for _index, location in torch.nonzero(output_ep > 0.5):
+                    relation_end_ids_all[_index.item() + index].append(location.item())
+                index += parallel
+
+            for i, (start_ids, end_ids) in enumerate(zip(relation_start_ids_all, relation_end_ids_all)):
+                label_set = get_span(list(start_ids), list(end_ids))
+                for (start, end) in label_set:
+                    prompt = relation_encode_result[i]['prompt']
+                    prompt_true = prompt.replace(subject + "的", '')
+                    if 'relations' not in subject_result.keys():
+                        subject_result['relations'] = {}
+                    if prompt_true not in subject_result['relations']:
+                        subject_result['relations'][prompt_true] = []
+                    new_ner_result = {
+                            'text': relation_encode_result[i]['content'][start - len(prompt) - 2: end - len(prompt) - 2],
+                            'start': relation_encode_result[i]['start_id'] + start - len(prompt) - 2,
+                            'end': relation_encode_result[i]['start_id'] + end - len(prompt) - 2}
+                    assert new_ner_result['text'] == content[new_ner_result['start']: new_ner_result['end']]
+                    subject_result['relations'][prompt_true].append(new_ner_result)
+
+    return result_all
+
+
 class Dict2Class:
     def __init__(self, **entries):
         self.__dict__.update(entries)
 
 
 torch_env()
-model_name = './checkpoints/现金流生成式-chinese-t5-base-cluecorpussmall-2023-06-13'
+model_name = './checkpoints/CemeteryFundUIE-chinese-uie-base-2023-06-29'
 args_path = os.path.join(model_name, 'args.json')
 model_path = os.path.join(model_name, 'model_best.pt')
 labels_path = os.path.join(model_name, 'labels.json')
 
-port = 12004
+port = 12005
 with open(args_path, "r", encoding="utf-8") as fp:
     tmp_args = json.load(fp)
 with open(labels_path, 'r', encoding='utf-8') as f:
     label_list = json.load(f)
-id2label = {k: v for k, v in enumerate(label_list)}
+
 args = Dict2Class(**tmp_args)
+if args.task_type_detail != 'uie':
+    id2label = {k: v for k, v in enumerate(label_list)}
 tokenizer = BertTokenizer(os.path.join(args.bert_dir, 'vocab.txt'))
 
 if args.task_type == 'classification':
     model, device = load_model_and_parallel(Classification(args), args.gpu_ids, model_path)
 elif args.task_type == 'sequence':
-    if args.use_gp == True:
-        model, device = load_model_and_parallel(GlobalPointerNer(args), args.gpu_ids, model_path)
+    if args.task_type_detail != 'uie':
+        if args.use_gp == True:
+            model, device = load_model_and_parallel(GlobalPointerNer(args), args.gpu_ids, model_path)
+        else:
+            model, device = load_model_and_parallel(SequenceLabeling(args), args.gpu_ids, model_path)
+            model.crf.cpu()
     else:
-        model, device = load_model_and_parallel(SequenceLabeling(args), args.gpu_ids, model_path)
-        model.crf.cpu()
+        model, device = load_model_and_parallel(UIE4Ner(args), args.gpu_ids, model_path)
 elif args.task_type == 'relationship':
     model, device = load_model_and_parallel(GlobalPointerRe(args), args.gpu_ids, model_path)
 elif args.task_type == 'generation':
@@ -177,6 +290,8 @@ elif args.task_type == 'generation':
     tokenizer = AutoTokenizer.from_pretrained(args.bert_dir)
     pass
 model.eval()
+for name, param in model.named_parameters():
+    param.requires_grad = False
 app = Flask(__name__)
 torch.set_float32_matmul_precision('high')
 
@@ -208,6 +323,10 @@ def prediction():
                     outputs = tokenizer.batch_decode(outputs, skip_special_tokens=True)
                     one_result = [item.replace(' ', '') for item in outputs][0]
                     results.append(one_result)
+            elif args.task_type_detail == 'uie':
+                for input in msgs:
+                    results.append(get_uie_result(input))
+                    pass
             else:
                 for index in range(len(msgs) // count + 1):
                     msg = msgs[index * count: index * count + count]

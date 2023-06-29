@@ -229,6 +229,8 @@ elif args.task_type == 'relationship':
     model, device = load_model_and_parallel(GlobalPointerRe(args), args.gpu_ids, model_path)
     pass
 model.eval()
+for name, param in model.named_parameters():
+    param.requires_grad = False
 app = Flask(__name__)
 
 

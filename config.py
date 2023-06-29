@@ -25,22 +25,23 @@ class Args:
         # chinese-roberta-base-wwm-cluecorpussmall
         # chinese-electra-180g-base-discriminator chinese-electra-180g-small-discriminator
         # chinese-nezha-base
-        #
-        parser.add_argument('--bert_dir', default='../model/chinese-t5-base-cluecorpussmall/',
+        # chinese-t5-base-cluecorpussmall
+        # chinese-uie-base
+        parser.add_argument('--bert_dir', default='../model/chinese-uie-base/',
                             help='pre train model dir for uer')
-        parser.add_argument('--data_dir', default='./data/现金流生成式/',
+        parser.add_argument('--data_dir', default='./data/CemeteryFundUIE/',
                             help='data dir for uer')
 
         # other args
         parser.add_argument('--task_type', default=None, type=str,
                             help='type of task, classification sequence or relationship or generation')
         parser.add_argument('--task_type_detail', default=None, type=str,
-                            help='type of task_details, sentence_pair sequence_labeling')
+                            help='type of task_details, sentence_pair sequence_labeling uie')
         parser.add_argument('--seed', type=int, default=1024,
                             help='random seed')
         parser.add_argument('--gpu_ids', type=str, default='0',
                             help='gpu ids to use, -1 for cpu, "0,1" for multi gpu')
-        parser.add_argument('--max_seq_len', default=256, type=int)
+        parser.add_argument('--max_seq_len', default=512, type=int)
         parser.add_argument('--swa_start', default=3, type=int,
                             help='the epoch when swa start')
 
