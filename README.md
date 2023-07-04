@@ -34,7 +34,8 @@ transformers==4.26.0
   - 运行 conda create -n yourname python=3.10.0
   - conda activate yourname / source activate yourname
   - 执行下面的命令安装torch环境 参考 https://pytorch.org/get-started/previous-versions/
-  - conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch 
+  - conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cudatoolkit=11.3 -c pytorch
+  - 如果是cpu机器：conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cpuonly -c pytorch
   - 执行下面的命令安装机器学习库scikit-learn==1.1.3
   - conda install scikit-learn  
   - conda install transformers==4.26.0
@@ -74,3 +75,6 @@ transformers==4.26.0
  - 2023-06-06：更新了NER-GP的server，完善了全部模型的置信度支持
  - 2023-06-20：增加了生成式模型的支持，优化了GP4NER的解码方式，完善了tqdm在linux下的表现
  - 2023-06-29：1.增加了对longformer的支持 2.从标注平台到模型推理 在实体识别任务和关系抽取任务复现了UIE模型 详情请参考CemeteryFundUIE项目
+ - 2023-07-04：
+     - 增加了对ernie的支持
+     - 增加了对uie版本的ernie模型支持，详情参考CemeteryFundErnie项目
