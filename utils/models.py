@@ -306,7 +306,10 @@ class GlobalPointerNer(BaseModel):
                                                 head_size=self.args.head_size)
 
     def forward(self, token_ids, attention_masks, token_type_ids):
-        output = self.bert_module(token_ids, attention_masks, token_type_ids)
+        output = self.bert_module(input_ids=token_ids,
+                                  attention_mask=attention_masks,
+                                  token_type_ids=token_type_ids)
+        # output = self.bert_module(token_ids, attention_masks, token_type_ids)
         sequence_output = output[0]  # [batch_size, seq_len, hidden_size]
         logits = self.global_pointer(sequence_output, attention_masks.gt(0).long())
         return logits

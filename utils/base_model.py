@@ -9,6 +9,7 @@
 """
 import os
 import sys
+
 sys.path.append(os.path.dirname(__file__))
 import torch
 import torch.nn as nn
@@ -58,12 +59,25 @@ class BaseModel(nn.Module):
         elif 't5' in model_name:
             self.bert_module = MT5ForConditionalGeneration.from_pretrained(bert_dir,
                                                                            output_hidden_states=False)
+        elif 'ernie' in model_name and 'uie' in model_name:
+            self.bert_module = ErnieModel.from_pretrained(bert_dir,
+                                                          output_hidden_states=False)  # 0.8684 0.8622  0.8783
+
+            # self.bert_module = torch.load(os.path.join('../model/chinese-uie-base/', 'pytorch_model.bin'))  # 模型结构见：UIE
+            # self.bert_module = self.bert_module.encoder  # 0.8609  0.8646  0.8722
+
+            # self.bert_module = torch.load(os.path.join('../model/chinese-uie-base/', 'pytorch_model.bin'))  # 模型结构见：UIE
+            # self.bert_module.config = self.bert_module.encoder.config  # 0.8711   0.8750  0.8684
+        elif 'ernie' in model_name:
+            self.bert_module = ErnieModel.from_pretrained(bert_dir,
+                                                          output_hidden_states=False,
+                                                          hidden_dropout_prob=dropout_prob)
         elif 'uie' in model_name:
             # self.bert_module = UIE(ErnieModel)
             # model = torch.load(os.path.join(bert_dir, 'pytorch_model.pt'), map_location=torch.device('cpu'))
             # self.bert_module.load_state_dict(model, strict=True)
             self.bert_module = torch.load(os.path.join(bert_dir, 'pytorch_model.bin'))  # 模型结构见：UIE
-            self.bert_module.config = None
+            self.bert_module.config = self.bert_module.encoder.config
         else:
             self.bert_module = AutoModel.from_pretrained(bert_dir,
                                                          output_hidden_states=False,

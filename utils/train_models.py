@@ -387,7 +387,7 @@ class TrainGlobalPointerNer:
                 self.optimizer.step()  # 根据梯度更新网络参数
                 self.scheduler.step()  # 更新优化器的学习率
                 self.model.zero_grad()  # 将所有模型参数的梯度置为0
-            if epoch > self.args.train_epochs * 0.:
+            if epoch > self.args.train_epochs * 0.3:
                 _, f1 = self.dev()
                 if f1 > best_f1:
                     best_f1 = f1

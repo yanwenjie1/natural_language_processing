@@ -11,6 +11,7 @@
 import torch
 import torch.nn as nn
 
+
 class UIE(nn.Module):
 
     def __init__(self, encoder):
@@ -55,7 +56,9 @@ class UIE(nn.Module):
             token_type_ids=token_type_ids,
             position_ids=pos_ids,
             attention_mask=attention_mask,
-        )["last_hidden_state"]
+        )
+        # return sequence_output
+        sequence_output = sequence_output['last_hidden_state']
         start_logits = self.linear_start(sequence_output)  # (batch, seq_len, 1)
         start_logits = torch.squeeze(start_logits, -1)  # (batch, seq_len)
         start_prob = self.sigmoid(start_logits)  # (batch, seq_len)
