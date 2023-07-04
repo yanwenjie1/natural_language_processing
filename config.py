@@ -27,9 +27,10 @@ class Args:
         # chinese-nezha-base
         # chinese-t5-base-cluecorpussmall
         # chinese-uie-base
-        parser.add_argument('--bert_dir', default='../model/chinese-uie-base/',
+        # chinese-ernie-uie
+        parser.add_argument('--bert_dir', default='../model/chinese-ernie-uie/',
                             help='pre train model dir for uer')
-        parser.add_argument('--data_dir', default='./data/CemeteryFundUIE/',
+        parser.add_argument('--data_dir', default='./data/CemeteryFundErnie/',
                             help='data dir for uer')
 
         # other args

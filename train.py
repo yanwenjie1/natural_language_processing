@@ -357,6 +357,47 @@ if __name__ == '__main__':
                                 collate_fn=gp_collate_fn,
                                 num_workers=0)
 
+    if args.data_name == "CemeteryFundErnie":
+        # set_seed(args.seed)
+        args.task_type = 'sequence'
+        args.task_type_detail = 'sequence_labeling'
+        args.batch_size = 8
+        # args.crf_lr = 1.5e-5
+        args.train_epochs = 10
+        args.use_gp = True
+        args.use_advert_train = False
+
+        with open(os.path.join(args.data_dir, 'labels.json'), 'r', encoding='utf-8') as f:
+            label_list = json.load(f)
+        label2id = {}
+        id2label = {}
+        for k, v in enumerate(label_list):
+            label2id[v] = k
+            id2label[k] = v
+        args.num_tags = len(label_list)
+
+        logger.info(args)
+        save_json(args.save_path, vars(args), 'args')
+
+        with open(os.path.join(args.data_dir, 'train_data.pkl'), 'rb') as f:
+            train_features = pickle.load(f)
+        train_dataset = GPDataset(train_features, args)
+        train_sampler = SequentialSampler(train_dataset)
+        train_loader = DataLoader(dataset=train_dataset,
+                                  batch_size=args.batch_size,
+                                  sampler=train_sampler,
+                                  collate_fn=gp_collate_fn,
+                                  num_workers=0)
+        with open(os.path.join(args.data_dir, 'dev_data.pkl'), 'rb') as f:
+            dev_features = pickle.load(f)
+        dev_dataset = GPDataset(dev_features, args)
+        dev_sampler = SequentialSampler(dev_dataset)
+        dev_loader = DataLoader(dataset=dev_dataset,
+                                batch_size=args.batch_size,
+                                sampler=dev_sampler,
+                                collate_fn=gp_collate_fn,
+                                num_workers=0)
+
     if args.data_name == "esg_定性_multi":
         # set_seed(args.seed)
         args.task_type = 'sequence'
@@ -605,8 +646,8 @@ if __name__ == '__main__':
         # set_seed(args.seed)
         args.task_type = 'sequence'
         args.task_type_detail = 'uie'
-        args.batch_size = 8
-        args.train_epochs = 20
+        args.batch_size = 12
+        args.train_epochs = 2
         args.use_advert_train = False
         reset_console(args)
         # logger.info(args)
