@@ -6,7 +6,7 @@
 ```python
 python==3.10.0
 torch==1.12.1
-transformers==4.26.0
+transformers==4.29.2
 ```
 
 ## 项目结构
@@ -38,14 +38,14 @@ transformers==4.26.0
   - 如果是cpu机器：conda install pytorch==1.12.1 torchvision==0.13.1 torchaudio==0.12.1 cpuonly -c pytorch
   - 执行下面的命令安装机器学习库scikit-learn==1.1.3
   - conda install scikit-learn
-  - conda install transformers==4.30.2
+  - conda install transformers==4.29.2
   - pip install pytorch-crf==0.7.2
   - pip install pynvml==11.4.1
   - pip install flask
   - pip install gevent
  # 备注
  - 已测试支持的cuda版本：11.0-11.7
- - 已测试支持的pytorch版本：1.7.0-1.13.0
+ - 已测试支持的pytorch版本：1.7.0-2.0.0
  - 已测试支持的预训练模型：
     - bert
     - albert
